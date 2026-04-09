@@ -305,6 +305,7 @@ body {
   border-radius: var(--radius-md);
   padding: 0.5rem 0.75rem;
   box-shadow: 0 4px 15px rgba(239,68,68,0.1);
+  animation: timerPulse 2.5s infinite ease-in-out;
 }
 
 .sp-timer-left {
@@ -397,6 +398,11 @@ body {
   0% { background-position: 0% 50%; }
   50% { background-position: 100% 50%; }
   100% { background-position: 0% 50%; }
+}
+
+@keyframes timerPulse {
+  0%, 100% { box-shadow: 0 4px 15px rgba(239,68,68,0.1); border-color: rgba(239,68,68,0.3); }
+  50% { box-shadow: 0 4px 30px rgba(239,68,68,0.4); border-color: rgba(239,68,68,0.7); }
 }
 
 /* Previews */
@@ -592,7 +598,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.04em;
   margin-bottom: 0.2rem;
-  background: linear-gradient(90deg, #ff0055, #ffaa00, #ff0055, #ffaa00, #ff0055);
+  background: linear-gradient(90deg, #FF1744, #FF9100, #FFE600, #FF9100, #FF1744);
   background-size: 300% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -610,6 +616,9 @@ body {
   font-size: 0.82rem;
   color: var(--text-muted);
   font-weight: 600;
+  text-decoration: line-through;
+  text-decoration-color: #3B82F6;
+  text-decoration-thickness: 2px;
 }
 
 .sp-cta-new {
