@@ -207,14 +207,15 @@ body {
 }
 
 .sp-avatar-wrap {
-  width: 56px;
-  height: 56px;
+  width: 72px;
+  height: 72px;
   border-radius: 50%;
-  padding: 2px;
+  padding: 3px;
   background: var(--gold-gradient);
   position: relative;
   flex-shrink: 0;
   box-shadow: 0 4px 16px var(--gold-glow);
+  margin-top: -12px; /* Push it upside */
 }
 
 .sp-avatar {
