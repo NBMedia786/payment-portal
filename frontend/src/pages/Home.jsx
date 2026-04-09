@@ -162,7 +162,7 @@ export default function Home() {
     const profileName = s.profile_name || 'Prachi Sharma';
     const profileHandle = s.profile_handle || '@prachi_vip';
     const profileAvatar = s.profile_avatar || 'https://images.unsplash.com/photo-1534528741775-53994a69daeb?auto=format&fit=crop&q=80&w=400&h=400';
-    const fansCount = s.fans_count || '25.4K';
+    const fansCount = data?.active_members_count !== undefined ? data.active_members_count : '...';
     const videosCount = s.videos_count || '840+';
     const offerTag = s.offer_tag || 'SPECIAL PRICE ENDS IN';
     const sectionTitle = s.section_title || 'Previews';

@@ -45,18 +45,21 @@ app.get('/api/public/data', async (req, res) => {
         const [
             { data: offer },
             { data: settings },
-            { data: previews }
+            { data: previews },
+            { count: activeCount }
         ] = await Promise.all([
             supabase.from('prachi_offers').select('*').eq('is_active', 1).order('id', { ascending: false }).limit(1).maybeSingle(),
             supabase.from('prachi_settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
-            supabase.from('prachi_previews').select('*').order('order_index', { ascending: true })
+            supabase.from('prachi_previews').select('*').order('order_index', { ascending: true }),
+            supabase.from('prachi_subscriptions').select('*', { count: 'exact', head: true }).eq('status', 'active')
         ]);
         
         res.json({
             offer: offer || {},
             settings: settings || {},
             upi_id: settings ? settings.upi_id : '',
-            previews: previews || []
+            previews: previews || [],
+            active_members_count: activeCount || 0
         });
     } catch (e) {
         res.status(500).json({ error: e.message });
