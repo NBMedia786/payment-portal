@@ -1,7 +1,7 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
-const db = require('./database');
+const supabase = require('./database');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const multer = require('multer');
@@ -40,26 +40,27 @@ app.use('/uploads', express.static('uploads'));
 // --- PUBLIC ROUTES (Frontend Portal) ---
 
 // 1. Get current public offer and settings API
-app.get('/api/public/data', (req, res) => {
-    // We run consecutive queries
-    db.get('SELECT * FROM offers WHERE is_active = 1 ORDER BY id DESC LIMIT 1', [], (err, offer) => {
-        if (err) return res.status(500).json({ error: err.message });
+app.get('/api/public/data', async (req, res) => {
+    try {
+        const [
+            { data: offer },
+            { data: settings },
+            { data: previews }
+        ] = await Promise.all([
+            supabase.from('prachi_offers').select('*').eq('is_active', 1).order('id', { ascending: false }).limit(1).maybeSingle(),
+            supabase.from('prachi_settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle(),
+            supabase.from('prachi_previews').select('*').order('order_index', { ascending: true })
+        ]);
         
-        db.get('SELECT * FROM settings ORDER BY id DESC LIMIT 1', [], (err, settings) => {
-            if (err) return res.status(500).json({ error: err.message });
-
-            db.all('SELECT * FROM previews ORDER BY order_index ASC', [], (err, previews) => {
-                if (err) return res.status(500).json({ error: err.message });
-
-                res.json({
-                    offer: offer || {},
-                    settings: settings || {},
-                    upi_id: settings ? settings.upi_id : '',
-                    previews: previews || []
-                });
-            });
+        res.json({
+            offer: offer || {},
+            settings: settings || {},
+            upi_id: settings ? settings.upi_id : '',
+            previews: previews || []
         });
-    });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
 });
 
 // 2. Instamojo — Create a payment request
@@ -72,38 +73,40 @@ app.post('/api/payment/create', async (req, res) => {
         return res.status(400).json({ error: 'Valid phone number is required' });
     }
 
-    db.get('SELECT * FROM offers WHERE is_active = 1 ORDER BY id DESC LIMIT 1', [], async (err, offer) => {
+    try {
+        const { data: offer, error: err } = await supabase.from('prachi_offers').select('*').eq('is_active', 1).order('id', { ascending: false }).limit(1).maybeSingle();
         if (err) return res.status(500).json({ error: err.message });
 
         const amount = offer ? offer.discounted_price : 199;
 
-        try {
-            const paymentRequest = await instamojo.createPaymentRequest({
-                amount,
-                purpose: 'Monthly Exclusive Content Subscription',
-                buyerName: buyerName || '',
-                phone,
-                email: email || '',
-                redirectUrl: `${FRONTEND_URL}/payment/callback`,
-                webhookUrl: `${BACKEND_URL}/api/payment/webhook`
-            });
+        const paymentRequest = await instamojo.createPaymentRequest({
+            amount,
+            purpose: 'Monthly Exclusive Content Subscription',
+            buyerName: buyerName || '',
+            phone,
+            email: email || '',
+            redirectUrl: `${FRONTEND_URL}/payment/callback`,
+            webhookUrl: `${BACKEND_URL}/api/payment/webhook`
+        });
 
-            db.run(
-                `INSERT INTO subscriptions (telegram_username, phone, transaction_id, amount, plan, status, started_at)
-                 VALUES (?, ?, ?, ?, 'monthly', 'pending', datetime('now'))`,
-                [telegramUsername || '', phone, paymentRequest.id, amount]
-            );
+        await supabase.from('prachi_subscriptions').insert({
+            telegram_username: telegramUsername || '',
+            phone,
+            transaction_id: paymentRequest.id,
+            amount,
+            plan: 'monthly',
+            status: 'pending'
+        });
 
-            res.json({
-                success: true,
-                payment_url: paymentRequest.longurl,
-                payment_request_id: paymentRequest.id
-            });
-        } catch (e) {
-            console.error('Instamojo create error:', e.message);
-            res.status(500).json({ error: 'Payment gateway error. Please try again.' });
-        }
-    });
+        res.json({
+            success: true,
+            payment_url: paymentRequest.longurl,
+            payment_request_id: paymentRequest.id
+        });
+    } catch (e) {
+        console.error('Instamojo create error:', e.message);
+        res.status(500).json({ error: 'Payment gateway error. Please try again.' });
+    }
 });
 
 // 2b. Instamojo — Webhook (server-to-server callback after payment)
@@ -116,23 +119,27 @@ app.post('/api/payment/webhook', (req, res) => {
         const now = new Date().toISOString();
         const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-        db.run(
-            `UPDATE subscriptions SET status = 'active', expires_at = ?, transaction_id = ?
-             WHERE transaction_id = ? AND status = 'pending'`,
-            [expiresAt, payment_id, payment_request_id],
-            function (err) {
-                if (err) console.error('[Webhook] DB update error:', err.message);
-                else console.log(`[Webhook] Subscription activated for request ${payment_request_id}`);
+        (async () => {
+            const { data: updatedSub, error: updateErr } = await supabase
+                .from('prachi_subscriptions')
+                .update({ status: 'active', expires_at: expiresAt, transaction_id: payment_id })
+                .eq('transaction_id', payment_request_id)
+                .eq('status', 'pending')
+                .select()
+                .maybeSingle();
 
-                if (this.lastID || this.changes) {
-                    db.run(
-                        `INSERT INTO payment_logs (subscription_id, transaction_id, amount, status, paid_at)
-                         SELECT id, ?, amount, 'success', ? FROM subscriptions WHERE transaction_id = ? LIMIT 1`,
-                        [payment_id, now, payment_id]
-                    );
-                }
+            if (updateErr) console.error('[Webhook] DB update error:', updateErr.message);
+            else if (updatedSub) {
+                console.log(`[Webhook] Subscription activated for request ${payment_request_id}`);
+                await supabase.from('prachi_payment_logs').insert({
+                    subscription_id: updatedSub.id,
+                    transaction_id: payment_id,
+                    amount: updatedSub.amount,
+                    status: 'success',
+                    paid_at: now
+                });
             }
-        );
+        })();
     }
 
     res.status(200).send('OK');
@@ -152,61 +159,67 @@ app.get('/api/payment/verify/:paymentRequestId/:paymentId', async (req, res) => 
         const now = new Date().toISOString();
         const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-        db.get(
-            `SELECT * FROM subscriptions WHERE transaction_id = ?`,
-            [paymentId],
-            async (err, existingSub) => {
-                if (existingSub && existingSub.status === 'active') {
-                    let inviteUrl = '';
-                    db.get('SELECT telegram_channel_url FROM settings ORDER BY id DESC LIMIT 1', [], async (e, settings) => {
-                        inviteUrl = settings ? settings.telegram_channel_url : 'https://t.me/placeholder';
-                        if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
-                            try {
-                                const linkRes = await telegram.createInviteLink(86400);
-                                if (linkRes.ok && linkRes.result) inviteUrl = linkRes.result.invite_link;
-                            } catch (_) {}
-                        }
-                        return res.json({ success: true, telegram_url: inviteUrl, expires_at: existingSub.expires_at });
-                    });
-                    return;
-                }
-
-                db.run(
-                    `UPDATE subscriptions SET status = 'active', expires_at = ?, transaction_id = ?
-                     WHERE transaction_id = ? AND status = 'pending'`,
-                    [expiresAt, paymentId, paymentRequestId],
-                    async function (err2) {
-                        if (err2) return res.status(500).json({ error: err2.message });
-
-                        if (this.changes === 0) {
-                            db.run(
-                                `INSERT INTO subscriptions (phone, transaction_id, amount, plan, status, started_at, expires_at)
-                                 VALUES (?, ?, ?, 'monthly', 'active', ?, ?)`,
-                                [result.buyerPhone || '', paymentId, result.amount, now, expiresAt]
-                            );
-                        }
-
-                        db.run(
-                            `INSERT INTO payment_logs (subscription_id, transaction_id, amount, status, paid_at)
-                             SELECT id, ?, amount, 'success', ? FROM subscriptions WHERE transaction_id = ? LIMIT 1`,
-                            [paymentId, now, paymentId]
-                        );
-
-                        let inviteUrl = '';
-                        db.get('SELECT telegram_channel_url FROM settings ORDER BY id DESC LIMIT 1', [], async (e, settings) => {
-                            inviteUrl = settings ? settings.telegram_channel_url : 'https://t.me/placeholder';
-                            if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
-                                try {
-                                    const linkRes = await telegram.createInviteLink(86400);
-                                    if (linkRes.ok && linkRes.result) inviteUrl = linkRes.result.invite_link;
-                                } catch (_) {}
-                            }
-                            res.json({ success: true, telegram_url: inviteUrl, expires_at: expiresAt });
-                        });
-                    }
-                );
+        let inviteUrl = 'https://t.me/placeholder';
+        const { data: settings } = await supabase.from('prachi_settings').select('telegram_channel_url').order('id', { ascending: false }).limit(1).maybeSingle();
+        if (settings) inviteUrl = settings.telegram_channel_url;
+        
+        const getInviteUrl = async () => {
+            let url = inviteUrl;
+            if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
+                try {
+                    const linkRes = await telegram.createInviteLink(86400);
+                    if (linkRes.ok && linkRes.result) url = linkRes.result.invite_link;
+                } catch (_) {}
             }
-        );
+            return url;
+        };
+
+        const { data: existingSub } = await supabase.from('prachi_subscriptions').select('*').eq('transaction_id', paymentId).maybeSingle();
+        
+        if (existingSub && existingSub.status === 'active') {
+            return res.json({ success: true, telegram_url: await getInviteUrl(), expires_at: existingSub.expires_at });
+        }
+
+        const { data: updatedSub, error: updateErr } = await supabase
+            .from('prachi_subscriptions')
+            .update({ status: 'active', expires_at: expiresAt, transaction_id: paymentId })
+            .eq('transaction_id', paymentRequestId)
+            .eq('status', 'pending')
+            .select()
+            .maybeSingle();
+
+        if (updateErr) return res.status(500).json({ error: updateErr.message });
+
+        let currentSubId;
+        let amountPaid = result.amount;
+
+        if (!updatedSub) {
+            const { data: newSub } = await supabase.from('prachi_subscriptions').insert({
+                phone: result.buyerPhone || '',
+                transaction_id: paymentId,
+                amount: result.amount,
+                plan: 'monthly',
+                status: 'active',
+                started_at: now,
+                expires_at: expiresAt
+            }).select().maybeSingle();
+            if (newSub) currentSubId = newSub.id;
+        } else {
+            currentSubId = updatedSub.id;
+            amountPaid = updatedSub.amount;
+        }
+
+        if (currentSubId) {
+            await supabase.from('prachi_payment_logs').insert({
+                subscription_id: currentSubId,
+                transaction_id: paymentId,
+                amount: amountPaid,
+                status: 'success',
+                paid_at: now
+            });
+        }
+
+        res.json({ success: true, telegram_url: await getInviteUrl(), expires_at: expiresAt });
     } catch (e) {
         console.error('Payment verify error:', e.message);
         res.status(500).json({ success: false, error: 'Verification failed' });
@@ -214,17 +227,19 @@ app.get('/api/payment/verify/:paymentRequestId/:paymentId', async (req, res) => 
 });
 
 // 3. Check subscription status (public)
-app.get('/api/public/subscription/:phone', (req, res) => {
-    db.get(
-        `SELECT * FROM subscriptions WHERE phone = ? ORDER BY id DESC LIMIT 1`,
-        [req.params.phone],
-        (err, sub) => {
-            if (err) return res.status(500).json({ error: err.message });
-            if (!sub) return res.json({ active: false });
-            const isActive = sub.status === 'active' && new Date(sub.expires_at) > new Date();
-            res.json({ active: isActive, expires_at: sub.expires_at, status: sub.status });
-        }
-    );
+app.get('/api/public/subscription/:phone', async (req, res) => {
+    const { data: sub, error } = await supabase
+        .from('prachi_subscriptions')
+        .select('*')
+        .eq('phone', req.params.phone)
+        .order('id', { ascending: false })
+        .limit(1)
+        .maybeSingle();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    if (!sub) return res.json({ active: false });
+    const isActive = sub.status === 'active' && new Date(sub.expires_at) > new Date();
+    res.json({ active: isActive, expires_at: sub.expires_at, status: sub.status });
 });
 
 // --- ADMIN ROUTES (Secured) ---
@@ -244,84 +259,62 @@ const verifyToken = (req, res, next) => {
 };
 
 // Admin Login
-app.post('/api/admin/login', (req, res) => {
+app.post('/api/admin/login', async (req, res) => {
     const { username, password } = req.body;
     
-    // In production, the admin user should be pre-seeded. 
-    // We'll create one if the DB is empty on first login for dev purposes!
-    db.get('SELECT * FROM users WHERE username = ?', [username], async (err, user) => {
-        if (err) return res.status(500).json({ error: err.message });
-        
-        if (!user) {
-            if (username === ADMIN_USERNAME) {
-                const hash = await bcrypt.hash(password, 10);
-                db.run('INSERT INTO users (username, password_hash) VALUES (?, ?)', [ADMIN_USERNAME, hash]);
-                const token = jwt.sign({ username: ADMIN_USERNAME }, SECRET_KEY, { expiresIn: '1d' });
-                return res.json({ token });
-            }
-            return res.status(400).json({ error: 'User not found' });
+    const { data: user, error } = await supabase.from('prachi_users').select('*').eq('username', username).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    
+    if (!user) {
+        if (username === ADMIN_USERNAME) {
+            const hash = await bcrypt.hash(password, 10);
+            await supabase.from('prachi_users').insert({ username: ADMIN_USERNAME, password_hash: hash });
+            const token = jwt.sign({ username: ADMIN_USERNAME }, SECRET_KEY, { expiresIn: '1d' });
+            return res.json({ token });
         }
-        
-        const validPass = await bcrypt.compare(password, user.password_hash);
-        if (!validPass) return res.status(400).json({ error: 'Invalid password' });
-        
-        const token = jwt.sign({ id: user.id, username: user.username }, SECRET_KEY, { expiresIn: '1d' });
-        res.json({ token });
-    });
+        return res.status(400).json({ error: 'User not found' });
+    }
+    
+    const validPass = await bcrypt.compare(password, user.password_hash);
+    if (!validPass) return res.status(400).json({ error: 'Invalid password' });
+    
+    const token = jwt.sign({ id: user.id, username: user.username }, SECRET_KEY, { expiresIn: '1d' });
+    res.json({ token });
 });
 
 // Update Offer
-app.put('/api/admin/offer', verifyToken, (req, res) => {
+app.put('/api/admin/offer', verifyToken, async (req, res) => {
     const { original_price, discounted_price, timer_end_date } = req.body;
-    db.run(
-        `UPDATE offers SET original_price = ?, discounted_price = ?, timer_end_date = ? 
-        WHERE id = (SELECT id FROM offers ORDER BY id DESC LIMIT 1)`,
-        [original_price, discounted_price, timer_end_date],
-        function(err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
+    
+    const { data: latest } = await supabase.from('prachi_offers').select('id').order('id', { ascending: false }).limit(1).maybeSingle();
+    if (latest) {
+        const { error } = await supabase.from('prachi_offers').update({ original_price, discounted_price, timer_end_date }).eq('id', latest.id);
+        if (error) return res.status(500).json({ error: error.message });
+    } else {
+        await supabase.from('prachi_offers').insert({ original_price, discounted_price, timer_end_date });
+    }
+    res.json({ success: true });
 });
 
 // Get Settings
-app.get('/api/admin/settings', verifyToken, (req, res) => {
-    db.get('SELECT * FROM settings ORDER BY id DESC LIMIT 1', [], (err, settings) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(settings || {});
-    });
+app.get('/api/admin/settings', verifyToken, async (req, res) => {
+    const { data: settings, error } = await supabase.from('prachi_settings').select('*').order('id', { ascending: false }).limit(1).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(settings || {});
 });
 
 // Update Settings
-app.put('/api/admin/settings', verifyToken, (req, res) => {
-    const { 
-        upi_id, telegram_channel_url, profile_name, profile_handle, 
-        profile_avatar, fans_count, videos_count, bio_text,
-        offer_title, offer_subtitle, offer_tag, section_title,
-        cta_button_text, rotating_text_1, rotating_text_2, rotating_text_3,
-        cover_image_url, checkout_title, checkout_subtitle
-    } = req.body;
+app.put('/api/admin/settings', verifyToken, async (req, res) => {
+    const updateData = req.body;
+    const { data: latest } = await supabase.from('prachi_settings').select('id').order('id', { ascending: false }).limit(1).maybeSingle();
     
-    db.run(
-        `UPDATE settings SET 
-            upi_id = ?, telegram_channel_url = ?, profile_name = ?, 
-            profile_handle = ?, profile_avatar = ?, fans_count = ?, 
-            videos_count = ?, bio_text = ?,
-            offer_title = ?, offer_subtitle = ?, offer_tag = ?,
-            section_title = ?, cta_button_text = ?,
-            rotating_text_1 = ?, rotating_text_2 = ?, rotating_text_3 = ?,
-            cover_image_url = ?, checkout_title = ?, checkout_subtitle = ?
-        WHERE id = (SELECT id FROM settings ORDER BY id DESC LIMIT 1)`,
-        [upi_id, telegram_channel_url, profile_name, profile_handle, profile_avatar, 
-         fans_count, videos_count, bio_text,
-         offer_title, offer_subtitle, offer_tag, section_title,
-         cta_button_text, rotating_text_1, rotating_text_2, rotating_text_3,
-         cover_image_url, checkout_title, checkout_subtitle],
-        function(err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true });
-        }
-    );
+    if (latest) {
+        const { error } = await supabase.from('prachi_settings').update(updateData).eq('id', latest.id);
+        if (error) return res.status(500).json({ error: error.message });
+    } else {
+        await supabase.from('prachi_settings').insert(updateData);
+    }
+    res.json({ success: true });
 });
 
 // Upload media
@@ -331,72 +324,62 @@ app.post('/api/admin/upload', verifyToken, upload.single('media'), (req, res) =>
 });
 
 // Previews CRUD
-app.get('/api/admin/previews', verifyToken, (req, res) => {
-    db.all('SELECT * FROM previews ORDER BY order_index ASC', [], (err, previews) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(previews || []);
-    });
+app.get('/api/admin/previews', verifyToken, async (req, res) => {
+    const { data: previews, error } = await supabase.from('prachi_previews').select('*').order('order_index', { ascending: true });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(previews || []);
 });
 
-app.post('/api/admin/previews', verifyToken, (req, res) => {
+app.post('/api/admin/previews', verifyToken, async (req, res) => {
     const { title, url, type, is_locked, order_index } = req.body;
-    db.run(
-        `INSERT INTO previews (title, url, type, is_locked, order_index) VALUES (?, ?, ?, ?, ?)`,
-        [title || '', url, type || 'image', is_locked !== undefined ? is_locked : 1, order_index || 0],
-        function(err) {
-            if (err) return res.status(500).json({ error: err.message });
-            res.json({ success: true, id: this.lastID });
-        }
-    );
+    const { data, error } = await supabase.from('prachi_previews').insert({
+        title: title || '', url, type: type || 'image', is_locked: is_locked !== undefined ? is_locked : 1, order_index: order_index || 0
+    }).select().maybeSingle();
+    
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true, id: data.id });
 });
 
-app.delete('/api/admin/previews/:id', verifyToken, (req, res) => {
-    db.run(`DELETE FROM previews WHERE id = ?`, [req.params.id], function(err) {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json({ success: true });
-    });
+app.delete('/api/admin/previews/:id', verifyToken, async (req, res) => {
+    const { error } = await supabase.from('prachi_previews').delete().eq('id', req.params.id);
+    if (error) return res.status(500).json({ error: error.message });
+    res.json({ success: true });
 });
 
 // --- SUBSCRIPTION MANAGEMENT (Admin) ---
 
 // List all subscriptions
-app.get('/api/admin/subscriptions', verifyToken, (req, res) => {
-    db.all('SELECT * FROM subscriptions ORDER BY id DESC', [], (err, subs) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(subs || []);
-    });
+app.get('/api/admin/subscriptions', verifyToken, async (req, res) => {
+    const { data: subs, error } = await supabase.from('prachi_subscriptions').select('*').order('id', { ascending: false });
+    if (error) return res.status(500).json({ error: error.message });
+    res.json(subs || []);
 });
 
 // Manually cancel a subscription + kick from channel
 app.put('/api/admin/subscriptions/:id/cancel', verifyToken, async (req, res) => {
     const { id } = req.params;
-    db.get('SELECT * FROM subscriptions WHERE id = ?', [id], async (err, sub) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+    
+    const { data: sub, error } = await supabase.from('prachi_subscriptions').select('*').eq('id', id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!sub) return res.status(404).json({ error: 'Subscription not found' });
 
-        if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
+    if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
+        try {
+            await telegram.kickUser(sub.telegram_user_id);
             try {
-                await telegram.kickUser(sub.telegram_user_id);
-                try {
-                    await telegram.sendMessage(sub.telegram_user_id,
-                        '⚠️ Your subscription has expired. Please renew to continue accessing the private channel.'
-                    );
-                } catch (_) {}
-            } catch (e) {
-                console.error('Kick error:', e.message);
-            }
+                await telegram.sendMessage(sub.telegram_user_id,
+                    '⚠️ Your subscription has expired. Please renew to continue accessing the private channel.'
+                );
+            } catch (_) {}
+        } catch (e) {
+            console.error('Kick error:', e.message);
         }
+    }
 
-        const now = new Date().toISOString();
-        db.run(
-            `UPDATE subscriptions SET status = 'cancelled', cancelled_at = ?, kicked_at = ? WHERE id = ?`,
-            [now, now, id],
-            function (err2) {
-                if (err2) return res.status(500).json({ error: err2.message });
-                res.json({ success: true });
-            }
-        );
-    });
+    const now = new Date().toISOString();
+    const { error: err2 } = await supabase.from('prachi_subscriptions').update({ status: 'cancelled', cancelled_at: now, kicked_at: now }).eq('id', id);
+    if (err2) return res.status(500).json({ error: err2.message });
+    res.json({ success: true });
 });
 
 // Manually reactivate a subscription
@@ -404,79 +387,75 @@ app.put('/api/admin/subscriptions/:id/reactivate', verifyToken, async (req, res)
     const { id } = req.params;
     const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
 
-    db.get('SELECT * FROM subscriptions WHERE id = ?', [id], async (err, sub) => {
-        if (err) return res.status(500).json({ error: err.message });
-        if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+    const { data: sub, error } = await supabase.from('prachi_subscriptions').select('*').eq('id', id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!sub) return res.status(404).json({ error: 'Subscription not found' });
 
-        if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
-            try {
-                await telegram.unbanUser(sub.telegram_user_id);
-            } catch (e) {
-                console.error('Unban error:', e.message);
-            }
+    if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
+        try {
+            await telegram.unbanUser(sub.telegram_user_id);
+        } catch (e) {
+            console.error('Unban error:', e.message);
         }
+    }
 
-        db.run(
-            `UPDATE subscriptions SET status = 'active', expires_at = ?, cancelled_at = NULL, kicked_at = NULL WHERE id = ?`,
-            [expiresAt, id],
-            function (err2) {
-                if (err2) return res.status(500).json({ error: err2.message });
-                res.json({ success: true, expires_at: expiresAt });
-            }
-        );
-    });
+    const { error: err2 } = await supabase.from('prachi_subscriptions').update({ status: 'active', expires_at: expiresAt, cancelled_at: null, kicked_at: null }).eq('id', id);
+    if (err2) return res.status(500).json({ error: err2.message });
+    res.json({ success: true, expires_at: expiresAt });
 });
 
 // Get subscription stats
-app.get('/api/admin/subscriptions/stats', verifyToken, (req, res) => {
-    db.all(`SELECT
-        COUNT(*) as total,
-        SUM(CASE WHEN status = 'active' AND expires_at > datetime('now') THEN 1 ELSE 0 END) as active,
-        SUM(CASE WHEN status = 'cancelled' THEN 1 ELSE 0 END) as cancelled,
-        SUM(CASE WHEN status = 'expired' THEN 1 ELSE 0 END) as expired
-    FROM subscriptions`, [], (err, rows) => {
-        if (err) return res.status(500).json({ error: err.message });
-        res.json(rows[0] || { total: 0, active: 0, cancelled: 0, expired: 0 });
-    });
+app.get('/api/admin/subscriptions/stats', verifyToken, async (req, res) => {
+    const { data: subs, error } = await supabase.from('prachi_subscriptions').select('*');
+    if (error) return res.status(500).json({ error: error.message });
+    
+    let stats = { total: 0, active: 0, cancelled: 0, expired: 0 };
+    if (subs) {
+        const now = new Date();
+        subs.forEach(s => {
+            stats.total++;
+            if (s.status === 'active' && new Date(s.expires_at) > now) stats.active++;
+            if (s.status === 'cancelled') stats.cancelled++;
+            if (s.status === 'expired') stats.expired++;
+        });
+    }
+    res.json(stats);
 });
 
 // --- CRON: Check expired subscriptions every hour ---
-cron.schedule('0 * * * *', () => {
+cron.schedule('0 * * * *', async () => {
     console.log('[CRON] Checking expired subscriptions...');
     const now = new Date().toISOString();
 
-    db.all(
-        `SELECT * FROM subscriptions WHERE status = 'active' AND expires_at <= ?`,
-        [now],
-        async (err, expiredSubs) => {
-            if (err) return console.error('[CRON] DB error:', err.message);
-            if (!expiredSubs || expiredSubs.length === 0) return;
+    const { data: expiredSubs, error } = await supabase
+        .from('prachi_subscriptions')
+        .select('*')
+        .eq('status', 'active')
+        .lte('expires_at', now);
 
-            console.log(`[CRON] Found ${expiredSubs.length} expired subscriptions`);
+    if (error) return console.error('[CRON] DB error:', error.message);
+    if (!expiredSubs || expiredSubs.length === 0) return;
 
-            for (const sub of expiredSubs) {
-                if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
-                    try {
-                        await telegram.kickUser(sub.telegram_user_id);
-                        console.log(`[CRON] Kicked user ${sub.telegram_username || sub.telegram_user_id}`);
-                    } catch (e) {
-                        console.error(`[CRON] Kick failed for ${sub.telegram_user_id}:`, e.message);
-                    }
+    console.log(`[CRON] Found ${expiredSubs.length} expired subscriptions`);
 
-                    try {
-                        await telegram.sendMessage(sub.telegram_user_id,
-                            '⚠️ Your monthly subscription has expired.\n\n🔒 Your access to the private channel has been removed.\n\n💳 Renew now to continue enjoying exclusive content!'
-                        );
-                    } catch (_) {}
-                }
-
-                db.run(
-                    `UPDATE subscriptions SET status = 'expired', kicked_at = ? WHERE id = ?`,
-                    [now, sub.id]
-                );
+    for (const sub of expiredSubs) {
+        if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_CHANNEL_ID) {
+            try {
+                await telegram.kickUser(sub.telegram_user_id);
+                console.log(`[CRON] Kicked user ${sub.telegram_username || sub.telegram_user_id}`);
+            } catch (e) {
+                console.error(`[CRON] Kick failed for ${sub.telegram_user_id}:`, e.message);
             }
+
+            try {
+                await telegram.sendMessage(sub.telegram_user_id,
+                    '⚠️ Your monthly subscription has expired.\n\n🔒 Your access to the private channel has been removed.\n\n💳 Renew now to continue enjoying exclusive content!'
+                );
+            } catch (_) {}
         }
-    );
+
+        await supabase.from('prachi_subscriptions').update({ status: 'expired', kicked_at: now }).eq('id', sub.id);
+    }
 });
 
 // --- SERVE FRONTEND (Production) ---
