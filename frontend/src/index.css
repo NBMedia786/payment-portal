@@ -300,10 +300,11 @@ body {
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  background: linear-gradient(135deg, rgba(236,72,153,0.1) 0%, rgba(219,39,119,0.06) 100%);
-  border: 1px solid rgba(236,72,153,0.18);
+  background: linear-gradient(135deg, rgba(239,68,68,0.15) 0%, rgba(220,38,38,0.06) 100%);
+  border: 1px solid rgba(239,68,68,0.3);
   border-radius: var(--radius-md);
   padding: 0.5rem 0.75rem;
+  box-shadow: 0 4px 15px rgba(239,68,68,0.1);
 }
 
 .sp-timer-left {
@@ -313,14 +314,15 @@ body {
 }
 
 .sp-timer-icon {
-  color: var(--gold);
+  color: #ef4444;
   flex-shrink: 0;
+  animation: textPulse 2s infinite ease-in-out;
 }
 
 .sp-timer-label {
   font-size: 0.72rem;
   font-weight: 800;
-  color: var(--gold);
+  color: #ef4444;
   text-transform: uppercase;
   letter-spacing: 0.04em;
 }
@@ -346,7 +348,7 @@ body {
   flex-direction: column;
   align-items: center;
   background: rgba(0,0,0,0.5);
-  border: 1px solid rgba(236,72,153,0.15);
+  border: 1px solid rgba(239,68,68,0.25);
   border-radius: 8px;
   padding: 0.3rem 0.5rem;
   min-width: 38px;
@@ -355,14 +357,15 @@ body {
 .sp-t-val {
   font-size: 1.1rem;
   font-weight: 900;
-  color: var(--gold);
+  color: #f87171;
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
+  text-shadow: 0 0 10px rgba(239,68,68,0.5);
 }
 
 .sp-t-lbl {
   font-size: 0.5rem;
-  color: var(--text-muted);
+  color: #fca5a5;
   text-transform: uppercase;
   letter-spacing: 0.08em;
   font-weight: 700;
@@ -371,7 +374,7 @@ body {
 .sp-t-sep {
   font-size: 1rem;
   font-weight: 900;
-  color: var(--gold);
+  color: #ef4444;
   opacity: 0.5;
   animation: blink 1s step-end infinite;
 }
@@ -379,6 +382,16 @@ body {
 @keyframes blink {
   0%, 100% { opacity: 0.5; }
   50% { opacity: 0.15; }
+}
+
+@keyframes textPulse {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(1.05); }
+}
+
+@keyframes tagBounce {
+  0%, 100% { transform: translateY(0) scale(1); }
+  50% { transform: translateY(-3px) scale(1.05); }
 }
 
 /* Previews */
@@ -575,6 +588,7 @@ body {
   text-transform: uppercase;
   letter-spacing: 0.02em;
   margin-bottom: 0.2rem;
+  animation: textPulse 2s infinite ease-in-out;
 }
 
 .sp-cta-price {
@@ -606,6 +620,7 @@ body {
   font-weight: 800;
   padding: 0.15rem 0.5rem;
   border-radius: var(--radius-full);
+  animation: tagBounce 2s infinite ease-in-out;
 }
 
 .sp-cta-arrow {
@@ -1487,3 +1502,7 @@ textarea.input-elegant {
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: rgba(255,255,255,0.1); border-radius: 4px; }
 ::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.2); }
+
+.btn-gold {
+  animation: textPulse 2s infinite ease-in-out;
+}
