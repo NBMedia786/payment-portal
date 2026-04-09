@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { apiUrl } from '../apiConfig';
 import { CheckCircle2, XCircle, Loader2 } from 'lucide-react';
 
 export default function PaymentCallback() {
@@ -18,7 +19,7 @@ export default function PaymentCallback() {
             return;
         }
 
-        fetch(`${import.meta.env.VITE_API_URL}/api/payment/verify/${paymentRequestId}/${paymentId}`)
+        fetch(apiUrl(`/api/payment/verify/${paymentRequestId}/${paymentId}`))
             .then(res => res.json())
             .then(result => {
                 if (result.success && result.telegram_url) {

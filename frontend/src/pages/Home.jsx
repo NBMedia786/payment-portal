@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { apiUrl, API_BASE } from '../apiConfig';
 import {
     ShieldCheck, Lock, ChevronRight, Video, Sparkles, X,
     CheckCircle2, Crown, BadgeCheck, Star, MessageCircle,
@@ -86,7 +87,7 @@ export default function Home() {
     const payTimerUrgent = payTimer <= 60;
 
     useEffect(() => {
-        fetch(`${import.meta.env.VITE_API_URL}/api/public/data`)
+        fetch(apiUrl('/api/public/data'))
             .then(res => res.json())
             .then(json => { setData(json); setLoading(false); })
             .catch(() => setLoading(false));
@@ -123,7 +124,7 @@ export default function Home() {
             return;
         }
         setVerifying(true);
-        fetch(`${import.meta.env.VITE_API_URL}/api/payment/create`, {
+            fetch(apiUrl('/api/payment/create'), {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -275,7 +276,7 @@ export default function Home() {
                         {(previewList || defaultPreviews.map((url, i) => ({ url, type: 'image', id: i }))).map((item, i) => {
                             const imgSrc = typeof item === 'string'
                                 ? item
-                                : (item.url?.startsWith('http') ? item.url : `${import.meta.env.VITE_API_URL}${item.url}`);
+                                : (item.url?.startsWith('http') ? item.url : `${API_BASE}${item.url}`);
                             const isVisible = i < 2;
 
                             return (

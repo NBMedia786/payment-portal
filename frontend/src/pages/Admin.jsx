@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { API_BASE } from '../apiConfig';
 import {
     Settings, LogOut, LayoutDashboard, Image as ImageIcon,
     Upload, Trash2, Tag, Type, Lock, CheckCircle2,
@@ -130,13 +131,13 @@ export default function Admin() {
     }, [token]);
 
     const fetchSettings = () => {
-        fetch(`${import.meta.env.VITE_API_URL}/api/admin/settings`, {
+        fetch(`${API_BASE}/api/admin/settings`, {
             headers: { 'Authorization': `Bearer ${token}` }
         }).then(r => r.json()).then(data => {
             if (data && data.profile_name) setSettingsData(prev => ({ ...prev, ...data }));
         }).catch(console.error);
 
-        fetch(`${import.meta.env.VITE_API_URL}/api/public/data`)
+        fetch(`${API_BASE}/api/public/data`)
             .then(r => r.json()).then(data => {
                 if (data.offer) setOfferData({
                     original_price: data.offer.original_price || 899,
@@ -147,17 +148,17 @@ export default function Admin() {
     };
 
     const fetchPreviews = () => {
-        fetch(`${import.meta.env.VITE_API_URL}/api/admin/previews`, {
+        fetch(`${API_BASE}/api/admin/previews`, {
             headers: { 'Authorization': `Bearer ${token}` }
         }).then(r => r.json()).then(setPreviews).catch(console.error);
     };
 
     const fetchSubscriptions = () => {
-        fetch(`${import.meta.env.VITE_API_URL}/api/admin/subscriptions`, {
+        fetch(`${API_BASE}/api/admin/subscriptions`, {
             headers: { 'Authorization': `Bearer ${token}` }
         }).then(r => r.json()).then(setSubscriptions).catch(console.error);
 
-        fetch(`${import.meta.env.VITE_API_URL}/api/admin/subscriptions/stats`, {
+        fetch(`${API_BASE}/api/admin/subscriptions/stats`, {
             headers: { 'Authorization': `Bearer ${token}` }
         }).then(r => r.json()).then(setSubStats).catch(console.error);
     };
@@ -166,7 +167,7 @@ export default function Admin() {
         if (!confirm('Cancel this subscription? The user will be kicked from the channel.')) return;
         setLoading(true);
         try {
-            await fetch(`${import.meta.env.VITE_API_URL}/api/admin/subscriptions/${id}/cancel`, {
+            await fetch(`${API_BASE}/api/admin/subscriptions/${id}/cancel`, {
                 method: 'PUT',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -181,7 +182,7 @@ export default function Admin() {
     const handleReactivateSub = async (id) => {
         setLoading(true);
         try {
-            await fetch(`${import.meta.env.VITE_API_URL}/api/admin/subscriptions/${id}/reactivate`, {
+            await fetch(`${API_BASE}/api/admin/subscriptions/${id}/reactivate`, {
                 method: 'PUT',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -197,7 +198,7 @@ export default function Admin() {
         e.preventDefault();
         setLoading(true);
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/login`, {
+            const res = await fetch(`${API_BASE}/api/admin/login`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ username, password })
@@ -219,7 +220,7 @@ export default function Admin() {
         if (e) e.preventDefault();
         setLoading(true);
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/offer`, {
+            const res = await fetch(`${API_BASE}/api/admin/offer`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify(offerData)
@@ -236,7 +237,7 @@ export default function Admin() {
         if (e) e.preventDefault();
         setLoading(true);
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/settings`, {
+            const res = await fetch(`${API_BASE}/api/admin/settings`, {
                 method: 'PUT',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify(settingsData)
@@ -256,14 +257,14 @@ export default function Admin() {
         const formData = new FormData();
         formData.append('media', file);
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/upload`, {
+            const res = await fetch(`${API_BASE}/api/admin/upload`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
                 body: formData
             });
             const data = await res.json();
             if (data.url) {
-                setSettingsData(prev => ({ ...prev, profile_avatar: `${import.meta.env.VITE_API_URL}${data.url}` }));
+                setSettingsData(prev => ({ ...prev, profile_avatar: `${API_BASE}${data.url}` }));
                 showNotify('Avatar uploaded! Click Save to apply.');
             }
         } catch {
@@ -280,14 +281,14 @@ export default function Admin() {
         const formData = new FormData();
         formData.append('media', file);
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/upload`, {
+            const res = await fetch(`${API_BASE}/api/admin/upload`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
                 body: formData
             });
             const data = await res.json();
             if (data.url) {
-                setSettingsData(prev => ({ ...prev, cover_image_url: `${import.meta.env.VITE_API_URL}${data.url}` }));
+                setSettingsData(prev => ({ ...prev, cover_image_url: `${API_BASE}${data.url}` }));
                 showNotify('Cover image uploaded! Click Save to apply.');
             }
         } catch {
@@ -304,7 +305,7 @@ export default function Admin() {
         const formData = new FormData();
         formData.append('media', file);
         try {
-            const uploadRes = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/upload`, {
+            const uploadRes = await fetch(`${API_BASE}/api/admin/upload`, {
                 method: 'POST',
                 headers: { 'Authorization': `Bearer ${token}` },
                 body: formData
@@ -312,7 +313,7 @@ export default function Admin() {
             const uploadData = await uploadRes.json();
             if (uploadData.url) {
                 const isVideo = file.type.startsWith('video');
-                const addRes = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/previews`, {
+                const addRes = await fetch(`${API_BASE}/api/admin/previews`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                     body: JSON.stringify({
@@ -337,7 +338,7 @@ export default function Admin() {
     const handleDeleteMedia = async (id) => {
         if (!window.confirm('Delete this media item?')) return;
         try {
-            const res = await fetch(`${import.meta.env.VITE_API_URL}/api/admin/previews/${id}`, {
+            const res = await fetch(`${API_BASE}/api/admin/previews/${id}`, {
                 method: 'DELETE',
                 headers: { 'Authorization': `Bearer ${token}` }
             });
@@ -913,10 +914,10 @@ export default function Admin() {
                                                     <Trash2 size={14} />
                                                 </button>
                                                 {p.type === 'video' ? (
-                                                    <video src={`${import.meta.env.VITE_API_URL}${p.url}`} muted loop />
+                                                    <video src={`${API_BASE}${p.url}`} muted loop />
                                                 ) : (
                                                     <img
-                                                        src={p.url.startsWith('http') ? p.url : `${import.meta.env.VITE_API_URL}${p.url}`}
+                                                        src={p.url.startsWith('http') ? p.url : `${API_BASE}${p.url}`}
                                                         alt="Preview"
                                                     />
                                                 )}
