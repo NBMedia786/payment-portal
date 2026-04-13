@@ -85,7 +85,7 @@ async function postToPublicChannel(text, replyMarkup = null) {
     return callTelegramAPI('sendMessage', data);
 }
 
-// Send a blurred (spoiler) photo teaser to the public channel
+// Send a permanently blurred photo teaser to the public channel
 async function sendTeaserPhoto(photoUrl, caption, replyMarkup = null) {
     const publicChannelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
     if (!publicChannelId) throw new Error('TELEGRAM_PUBLIC_CHANNEL_ID not set');
@@ -93,8 +93,7 @@ async function sendTeaserPhoto(photoUrl, caption, replyMarkup = null) {
         chat_id: publicChannelId,
         photo: photoUrl,
         caption,
-        parse_mode: 'HTML',
-        has_spoiler: true   // native Telegram blur effect
+        parse_mode: 'HTML'
     };
     if (replyMarkup) data.reply_markup = replyMarkup;
     return callTelegramAPI('sendPhoto', data);

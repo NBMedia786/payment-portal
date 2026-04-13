@@ -8,6 +8,7 @@ const multer = require('multer');
 const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
+const sharp = require('sharp');
 const telegram = require('./telegram');
 const instantpay = require('./instantpay');
 const { pollUpdates } = require('./bot');
@@ -344,25 +345,33 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
     // Auto-tease post to public channel
     if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_PUBLIC_CHANNEL_ID) {
         const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
-        const backendUrl = process.env.BACKEND_URL || `http://localhost:${process.env.PORT || 5000}`;
         const contentType = (type || 'image') === 'video' ? '🎬 New Video' : '📸 New Photo';
         const caption =
             `${contentType} just dropped in the VIP Channel!\n\n` +
             `🔒 <b>This content is exclusive to VIP members only.</b>\n\n` +
-            `👇 Get access now and unlock everything inside!`;
+            `👇 Tap the button below to get access!`;
         const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
 
         if ((type || 'image') === 'image' && url) {
-            // Send the actual image blurred (Telegram spoiler effect)
-            const photoUrl = url.startsWith('http') ? url : `${backendUrl}${url}`;
-            telegram.sendTeaserPhoto(photoUrl, caption, keyboard)
-                .catch(e => {
-                    console.error('[AUTO-TEASE] Photo failed, falling back to text:', e.message);
+            // Blur image server-side with sharp, then send permanently blurred version
+            (async () => {
+                const filename = url.replace('/uploads/', '');
+                const inputPath = path.join('uploads', filename);
+                const blurredFilename = `tease-${Date.now()}-${filename}`;
+                const blurredPath = path.join('uploads', blurredFilename);
+                try {
+                    await sharp(inputPath).blur(20).jpeg({ quality: 75 }).toFile(blurredPath);
+                    const photoUrl = `${frontendUrl}/uploads/${blurredFilename}`;
+                    await telegram.sendTeaserPhoto(photoUrl, caption, keyboard);
+                    fs.unlink(blurredPath, () => {}); // clean up temp file
+                } catch (e) {
+                    console.error('[AUTO-TEASE] Blur failed, falling back to text:', e.message);
                     telegram.postToPublicChannel(caption, keyboard)
                         .catch(e2 => console.error('[AUTO-TEASE] Text fallback failed:', e2.message));
-                });
+                }
+            })();
         } else {
-            // Video or unknown — text-only tease
+            // Video — text-only tease
             telegram.postToPublicChannel(caption, keyboard)
                 .catch(e => console.error('[AUTO-TEASE] Failed:', e.message));
         }
