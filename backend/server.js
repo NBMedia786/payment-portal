@@ -60,7 +60,8 @@ app.get('/api/public/data', async (req, res) => {
             settings: settings || {},
             upi_id: settings ? settings.upi_id : '',
             previews: previews || [],
-            active_members_count: activeCount || 0
+            active_members_count: activeCount || 0,
+            bot_username: process.env.TELEGRAM_BOT_USERNAME || ''
         });
     } catch (e) {
         res.status(500).json({ error: e.message });

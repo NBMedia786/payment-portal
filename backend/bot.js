@@ -81,14 +81,19 @@ async function handleNewChatMember(update) {
 
     // --- SEND WELCOME MESSAGE ---
     try {
-        const welcomeText = `🎉 \b\bWelcome to the Exclusive VIP Channel!\b\b\n\n` +
-            `Thank you for subscribing. We're thrilled to have you here.\n\n` +
-            `📌 \b\bImportant Rules:\b\b\n` +
-            `• No screenshots or screen recording allowed.\n` +
-            `• Please respect the privacy of all content.\n\n` +
-            `\iEnjoy the exclusive updates, and feel free to reply directly to this bot if you ever need support!\i`;
-            
-        await sendMessage(userId, welcomeText.replace(/\b\b/g, '<b>').replace(/\i/g, '<i>').replace(/\i/g, '</i>'));
+        const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+        const welcomeText =
+            `🎉 <b>Welcome to the Exclusive VIP Channel!</b>\n\n` +
+            `Thank you for subscribing — you now have full access to all exclusive content! 🥳\n\n` +
+            `📌 <b>Important Rules:</b>\n` +
+            `• No screenshots or screen recording\n` +
+            `• Respect the privacy of all content\n` +
+            `• Enjoy and have fun! 💖\n\n` +
+            `<i>Need help or want to renew? Tap the button below or just message me here anytime.</i>`;
+
+        await sendMessage(userId, welcomeText, {
+            inline_keyboard: [[{ text: '🌐 Visit Website', url: frontendUrl }]]
+        });
     } catch (e) {
         console.error(`[BOT] Failed to send welcome message to ${userId}:`, e.message);
     }
@@ -138,17 +143,21 @@ async function handleCommand(message) {
     const text = (message.text || '').trim();
 
     if (!isAdmin(userId)) {
-        if (text === '/start') {
+        if (text === '/start' || text.startsWith('/start ')) {
             const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
             await sendMessage(chatId,
-                '👋 <b>Welcome!</b>\n\nThis bot manages subscriptions for the VIP channel.\n\n' +
-                'Click a button below to check your status, or contact an admin if you need help!',
+                `👋 <b>Welcome to the VIP Bot!</b>\n\n` +
+                `I'm here to help you with your exclusive subscription. Here's what I can do for you:\n\n` +
+                `✅ Check if your subscription is active\n` +
+                `⏳ See your expiry date & days remaining\n` +
+                `💳 Help you renew your subscription\n` +
+                `🙋 Connect you with support\n\n` +
+                `Tap a button below to get started 👇`,
                 {
                     inline_keyboard: [
-                        [{ text: '📱 Check Subscription Status', callback_data: 'check_status' }],
-                        [{ text: '🔥 Top VIP Content', callback_data: 'top_content' }],
-                        [{ text: '💳 Renew Subscription', url: frontendUrl }],
-                        [{ text: '🙋‍♀️ Contact Support', callback_data: 'contact_support' }]
+                        [{ text: '✅ Check My Subscription', callback_data: 'check_status' }],
+                        [{ text: '💳 Renew / Get Access', url: frontendUrl }],
+                        [{ text: '🙋 Contact Support', callback_data: 'contact_support' }]
                     ]
                 }
             );

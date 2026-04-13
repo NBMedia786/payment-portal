@@ -7,6 +7,7 @@ export default function PaymentCallback() {
     const [telegramUrl, setTelegramUrl] = useState('');
     const [expiresAt, setExpiresAt] = useState('');
     const [errorMsg, setErrorMsg] = useState('');
+    const [botUsername, setBotUsername] = useState('');
 
     useEffect(() => {
         const params = new URLSearchParams(window.location.search);
@@ -18,6 +19,12 @@ export default function PaymentCallback() {
             setErrorMsg('Missing payment details. Please try again.');
             return;
         }
+
+        // Fetch bot username alongside payment verification
+        fetch(apiUrl('/api/public/data'))
+            .then(r => r.json())
+            .then(d => { if (d.bot_username) setBotUsername(d.bot_username); })
+            .catch(() => {});
 
         fetch(apiUrl(`/api/payment/verify/${paymentRequestId}/${paymentId}`))
             .then(res => res.json())
@@ -85,56 +92,59 @@ export default function PaymentCallback() {
                         <h2 style={{ fontSize: '1.5rem', fontWeight: 800, marginBottom: '0.5rem', color: '#10B981' }}>
                             Payment Successful!
                         </h2>
-                        <p style={{ color: 'var(--text-secondary, #9CA3AF)', fontSize: '0.9rem', marginBottom: '2rem', lineHeight: 1.6 }}>
+                        <p style={{ color: 'var(--text-secondary, #9CA3AF)', fontSize: '0.9rem', marginBottom: '1.75rem', lineHeight: 1.6 }}>
                             Your access has been activated for <strong style={{ color: '#fff' }}>30 days</strong>.
-                            Click the button below to join the private Telegram channel.
+                            Follow the 2 steps below to get access.
                         </p>
 
-                        <div style={{
-                            display: 'flex', alignItems: 'center', gap: '0.85rem',
-                            background: 'rgba(255,255,255,0.04)',
-                            border: '1px solid rgba(255,255,255,0.08)',
-                            borderRadius: '14px',
-                            padding: '1rem 1.25rem',
-                            marginBottom: '1.5rem',
-                            textAlign: 'left'
-                        }}>
-                            <div style={{
-                                width: '48px', height: '48px', borderRadius: '50%',
-                                background: 'linear-gradient(135deg, #2AABEE 0%, #229ED9 100%)',
-                                display: 'flex', alignItems: 'center', justifyContent: 'center',
-                                flexShrink: 0
-                            }}>
-                                <svg width="24" height="24" viewBox="0 0 24 24" fill="white">
+                        {/* Step 1 — Start Bot */}
+                        {botUsername && (
+                            <div style={{ marginBottom: '0.75rem' }}>
+                                <p style={{ fontSize: '0.72rem', fontWeight: 700, color: '#E5A54B', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem', textAlign: 'left' }}>
+                                    Step 1 — Do this first
+                                </p>
+                                <a
+                                    href={`https://t.me/${botUsername}?start=welcome`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    style={{
+                                        display: 'flex', alignItems: 'center', gap: '0.75rem',
+                                        background: 'rgba(229,165,75,0.08)', border: '1px solid rgba(229,165,75,0.25)',
+                                        borderRadius: '14px', padding: '0.9rem 1.1rem',
+                                        textDecoration: 'none', color: '#fff', width: '100%', boxSizing: 'border-box'
+                                    }}
+                                >
+                                    <span style={{ fontSize: '1.4rem' }}>🤖</span>
+                                    <div style={{ textAlign: 'left' }}>
+                                        <p style={{ fontSize: '0.88rem', fontWeight: 700, color: '#E5A54B', marginBottom: '0.1rem' }}>Start the VIP Bot</p>
+                                        <p style={{ fontSize: '0.75rem', color: 'var(--text-muted, #6B7280)' }}>Tap to open &amp; press Start — so the bot can send you updates</p>
+                                    </div>
+                                </a>
+                            </div>
+                        )}
+
+                        {/* Step 2 — Join Channel */}
+                        <div style={{ marginBottom: '1.25rem' }}>
+                            <p style={{ fontSize: '0.72rem', fontWeight: 700, color: '#2AABEE', textTransform: 'uppercase', letterSpacing: '0.08em', marginBottom: '0.5rem', textAlign: 'left' }}>
+                                {botUsername ? 'Step 2 — Join the channel' : 'Join the channel'}
+                            </p>
+                            <a
+                                href={telegramUrl}
+                                target="_blank"
+                                rel="noopener noreferrer"
+                                className="btn-gold"
+                                style={{
+                                    fontSize: '1rem', padding: '1rem',
+                                    textDecoration: 'none', display: 'flex', alignItems: 'center',
+                                    justifyContent: 'center', gap: '0.5rem', width: '100%', boxSizing: 'border-box'
+                                }}
+                            >
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
                                     <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
                                 </svg>
-                            </div>
-                            <div>
-                                <p style={{ fontSize: '0.88rem', color: '#fff', fontWeight: 600, marginBottom: '0.15rem' }}>
-                                    Tap below to join the exclusive
-                                </p>
-                                <p style={{ fontSize: '0.9rem', color: 'var(--gold, #EC4899)', fontWeight: 700 }}>
-                                    Private Telegram Group
-                                </p>
-                            </div>
+                                Join Private VIP Channel
+                            </a>
                         </div>
-
-                        <a
-                            href={telegramUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="btn-gold"
-                            style={{
-                                marginBottom: '1rem', fontSize: '1.05rem', padding: '1.1rem',
-                                textDecoration: 'none', display: 'flex', alignItems: 'center',
-                                justifyContent: 'center', gap: '0.5rem', width: '100%', boxSizing: 'border-box'
-                            }}
-                        >
-                            <svg width="20" height="20" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M11.944 0A12 12 0 0 0 0 12a12 12 0 0 0 12 12 12 12 0 0 0 12-12A12 12 0 0 0 12 0a12 12 0 0 0-.056 0zm4.962 7.224c.1-.002.321.023.465.14a.506.506 0 0 1 .171.325c.016.093.036.306.02.472-.18 1.898-.962 6.502-1.36 8.627-.168.9-.499 1.201-.82 1.23-.696.065-1.225-.46-1.9-.902-1.056-.693-1.653-1.124-2.678-1.8-1.185-.78-.417-1.21.258-1.91.177-.184 3.247-2.977 3.307-3.23.007-.032.014-.15-.056-.212s-.174-.041-.249-.024c-.106.024-1.793 1.14-5.061 3.345-.48.33-.913.49-1.302.48-.428-.008-1.252-.241-1.865-.44-.752-.245-1.349-.374-1.297-.789.027-.216.325-.437.893-.663 3.498-1.524 5.83-2.529 6.998-3.014 3.332-1.386 4.025-1.627 4.476-1.635z"/>
-                            </svg>
-                            Join Private Telegram Group
-                        </a>
 
                         {expiresAt && (
                             <p style={{ fontSize: '0.75rem', color: 'var(--text-muted, #6B7280)' }}>
