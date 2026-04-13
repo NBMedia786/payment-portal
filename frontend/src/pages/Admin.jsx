@@ -4,7 +4,7 @@ import {
     Settings, LogOut, LayoutDashboard, Image as ImageIcon,
     Upload, Trash2, Tag, Type, Lock, CheckCircle2,
     AlertCircle, Crown, Users, Video, DollarSign,
-    Globe, MessageSquare, User, Camera, Clock, Send, BarChart2
+    Globe, MessageSquare, User, Camera, Clock, Send, BarChart2, Wrench
 } from 'lucide-react';
 
 /* ===========================
@@ -92,12 +92,15 @@ export default function Admin() {
         timer_end_date: ''
     });
 
+    const [maintenanceLoading, setMaintenanceLoading] = useState(false);
+
     const [settingsData, setSettingsData] = useState({
         upi_id: '',
         telegram_channel_url: '',
         profile_name: '',
         profile_handle: '',
         profile_avatar: '',
+        maintenance_mode: 0,
         fans_count: '',
         videos_count: '',
         bio_text: '',
@@ -159,7 +162,7 @@ export default function Admin() {
             headers: { 'Authorization': `Bearer ${token}` }
         }).then(r => r.json()).then(data => {
             if (handleAuthError(data)) return;
-            if (data && data.profile_name) setSettingsData(prev => ({ ...prev, ...data }));
+            if (data && typeof data === 'object') setSettingsData(prev => ({ ...prev, ...data }));
         }).catch(console.error);
 
         fetch(`${API_BASE}/api/public/data`)
@@ -251,6 +254,28 @@ export default function Admin() {
             showNotify('Network error during broadcast', 'error');
         }
         setBroadcastLoading(false);
+    };
+
+    const handleToggleMaintenance = async () => {
+        const newVal = settingsData.maintenance_mode == 1 ? 0 : 1;
+        setMaintenanceLoading(true);
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/settings`, {
+                method: 'PUT',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ ...settingsData, maintenance_mode: newVal })
+            });
+            const data = await res.json();
+            if (data.success) {
+                setSettingsData(prev => ({ ...prev, maintenance_mode: newVal }));
+                showNotify(newVal == 1 ? 'Maintenance mode ENABLED — site is now offline for visitors.' : 'Maintenance mode DISABLED — site is live again!');
+            } else {
+                showNotify('Failed to update maintenance mode.', 'error');
+            }
+        } catch {
+            showNotify('Network error.', 'error');
+        }
+        setMaintenanceLoading(false);
     };
 
     const handleReactivateSub = async (id) => {
@@ -564,6 +589,66 @@ export default function Admin() {
                                 <h1 className="admin-page-title">Command Center</h1>
                                 <p className="admin-page-subtitle">Welcome back. Here is your platform overview.</p>
                             </div>
+                        </div>
+
+                        {/* Maintenance Mode Toggle */}
+                        <div style={{
+                            display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '1rem',
+                            background: settingsData.maintenance_mode == 1
+                                ? 'linear-gradient(135deg, rgba(245,158,11,0.12) 0%, rgba(245,158,11,0.04) 100%)'
+                                : 'linear-gradient(135deg, rgba(16,185,129,0.08) 0%, rgba(16,185,129,0.02) 100%)',
+                            border: settingsData.maintenance_mode == 1
+                                ? '1px solid rgba(245,158,11,0.35)'
+                                : '1px solid rgba(16,185,129,0.2)',
+                            borderRadius: '16px', padding: '1.25rem 1.5rem', marginBottom: '2rem',
+                            transition: 'all 0.4s ease',
+                        }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem' }}>
+                                <div style={{
+                                    width: 40, height: 40, borderRadius: '10px', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                                    background: settingsData.maintenance_mode == 1 ? 'rgba(245,158,11,0.15)' : 'rgba(16,185,129,0.12)',
+                                }}>
+                                    <Wrench size={18} color={settingsData.maintenance_mode == 1 ? '#F59E0B' : 'var(--green)'} />
+                                </div>
+                                <div>
+                                    <div style={{ fontWeight: 700, fontSize: '0.95rem', color: '#fff', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+                                        Maintenance Mode
+                                        <span style={{
+                                            fontSize: '0.7rem', fontWeight: 700, padding: '0.2rem 0.6rem', borderRadius: '9999px',
+                                            background: settingsData.maintenance_mode == 1 ? 'rgba(245,158,11,0.2)' : 'rgba(16,185,129,0.15)',
+                                            color: settingsData.maintenance_mode == 1 ? '#F59E0B' : 'var(--green)',
+                                            letterSpacing: '0.05em', textTransform: 'uppercase',
+                                        }}>
+                                            {settingsData.maintenance_mode == 1 ? 'ACTIVE' : 'OFF'}
+                                        </span>
+                                    </div>
+                                    <p style={{ fontSize: '0.78rem', color: 'var(--text-muted)', marginTop: '0.1rem' }}>
+                                        {settingsData.maintenance_mode == 1
+                                            ? 'Site is offline for visitors. Admin panel still accessible.'
+                                            : 'Site is live and accessible to all visitors.'}
+                                    </p>
+                                </div>
+                            </div>
+                            <button
+                                onClick={handleToggleMaintenance}
+                                disabled={maintenanceLoading}
+                                style={{
+                                    display: 'flex', alignItems: 'center', gap: '0.5rem',
+                                    padding: '0.65rem 1.4rem', borderRadius: '9999px', border: 'none',
+                                    fontWeight: 700, fontSize: '0.85rem', cursor: maintenanceLoading ? 'not-allowed' : 'pointer',
+                                    background: settingsData.maintenance_mode == 1
+                                        ? 'linear-gradient(135deg, #10B981 0%, #059669 100%)'
+                                        : 'linear-gradient(135deg, #F59E0B 0%, #D97706 100%)',
+                                    color: '#fff', transition: 'all 0.3s ease',
+                                    boxShadow: settingsData.maintenance_mode == 1
+                                        ? '0 0 16px rgba(16,185,129,0.3)'
+                                        : '0 0 16px rgba(245,158,11,0.3)',
+                                    opacity: maintenanceLoading ? 0.6 : 1,
+                                    whiteSpace: 'nowrap',
+                                }}
+                            >
+                                {maintenanceLoading ? <><Spinner light /> Updating...</> : settingsData.maintenance_mode == 1 ? 'Disable — Go Live' : 'Enable Maintenance'}
+                            </button>
                         </div>
 
                         {/* Revenue Metrics */}
