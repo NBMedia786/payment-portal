@@ -170,6 +170,42 @@ async function handleSupportTicket(message) {
     const userId = message.from.id;
 
     if (isAdmin(userId)) {
+        // Fix old welcome message: admin forwards a channel welcome message to the bot
+        const fwdOrigin = message.forward_origin; // new Telegram API
+        const fwdChat = (fwdOrigin && fwdOrigin.chat) || message.forward_from_chat;
+        const fwdMsgId = (fwdOrigin && fwdOrigin.message_id) || message.forward_from_message_id;
+
+        if (fwdChat && fwdMsgId) {
+            const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+            const isVip = matchesChannel(fwdChat.id, CHANNEL_ID) || matchesChannel(fwdChat.username || '', CHANNEL_ID);
+            const isPublic = PUBLIC_CHANNEL_ID && (matchesChannel(fwdChat.id, PUBLIC_CHANNEL_ID) || matchesChannel(fwdChat.username || '', PUBLIC_CHANNEL_ID));
+
+            if (isVip || isPublic) {
+                const botUrl = cachedBotUsername
+                    ? `https://t.me/${cachedBotUsername}?start=${isVip ? 'vip' : 'public'}`
+                    : frontendUrl;
+
+                const markup = isVip
+                    ? { inline_keyboard: [[{ text: '🔔 Start Bot — Activate Perks', url: botUrl }]] }
+                    : { inline_keyboard: [
+                        [{ text: '🔔 Start Bot — Get Notified', url: botUrl }],
+                        [{ text: '🔓 Get VIP Access', url: frontendUrl }]
+                      ]};
+
+                try {
+                    await callTelegramAPI('editMessageReplyMarkup', {
+                        chat_id: fwdChat.id,
+                        message_id: fwdMsgId,
+                        reply_markup: markup
+                    });
+                    await sendMessage(chatId, `✅ Fixed! Button now links to:\n${botUrl}`);
+                } catch (e) {
+                    await sendMessage(chatId, `❌ Could not edit: ${e.message}\n\nMake sure you forwarded the exact welcome message from the channel.`);
+                }
+                return;
+            }
+        }
+
         // Allow admin to reply
         if (message.reply_to_message && message.reply_to_message.text) {
             const ticketMatch = message.reply_to_message.text.match(/\[Ticket UserID: (\d+)\]/);
