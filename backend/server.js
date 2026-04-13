@@ -360,7 +360,7 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                 const blurredFilename = `tease-${Date.now()}-${filename}`;
                 const blurredPath = path.join('uploads', blurredFilename);
                 try {
-                    await sharp(inputPath).blur(20).jpeg({ quality: 75 }).toFile(blurredPath);
+                    await sharp(inputPath).blur(60).jpeg({ quality: 75 }).toFile(blurredPath);
                     const photoUrl = `${frontendUrl}/uploads/${blurredFilename}`;
                     await telegram.sendTeaserPhoto(photoUrl, caption, keyboard);
                     fs.unlink(blurredPath, () => {}); // clean up temp file
