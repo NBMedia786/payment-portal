@@ -77,10 +77,19 @@ async function sendMessage(chatId, text, replyMarkup = null) {
     return callTelegramAPI('sendMessage', data);
 }
 
+async function postToPublicChannel(text, replyMarkup = null) {
+    const publicChannelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
+    if (!publicChannelId) throw new Error('TELEGRAM_PUBLIC_CHANNEL_ID not set');
+    const data = { chat_id: publicChannelId, text, parse_mode: 'HTML' };
+    if (replyMarkup) data.reply_markup = replyMarkup;
+    return callTelegramAPI('sendMessage', data);
+}
+
 module.exports = {
     kickUser,
     unbanUser,
     createInviteLink,
     sendMessage,
+    postToPublicChannel,
     callTelegramAPI
 };

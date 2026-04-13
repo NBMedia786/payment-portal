@@ -338,8 +338,23 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
     const { data, error } = await supabase.from('prachi_previews').insert({
         title: title || '', url, type: type || 'image', is_locked: is_locked !== undefined ? is_locked : 1, order_index: order_index || 0
     }).select().maybeSingle();
-    
+
     if (error) return res.status(500).json({ error: error.message });
+
+    // Auto-tease post to public channel
+    if (process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_PUBLIC_CHANNEL_ID) {
+        const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+        const contentType = (type || 'image') === 'video' ? '🎬 New Video' : '📸 New Photo';
+        const teaseText =
+            `${contentType} just dropped in the VIP Channel!\n\n` +
+            `🔒 <b>This content is exclusive to VIP members only.</b>\n\n` +
+            (title && title !== 'Uploaded Media' ? `<i>${title}</i>\n\n` : '') +
+            `👇 Get access now and unlock everything inside!`;
+        telegram.postToPublicChannel(teaseText, {
+            inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]]
+        }).catch(e => console.error('[AUTO-TEASE] Failed:', e.message));
+    }
+
     res.json({ success: true, id: data.id });
 });
 
@@ -451,6 +466,26 @@ app.get('/api/admin/subscriptions/stats', verifyToken, async (req, res) => {
     res.json(stats);
 });
 
+// Post promo message to public channel
+app.post('/api/admin/post-to-public', verifyToken, async (req, res) => {
+    const { message } = req.body;
+    if (!message || !message.trim()) return res.status(400).json({ error: 'Message is required' });
+
+    if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_PUBLIC_CHANNEL_ID) {
+        return res.status(400).json({ error: 'TELEGRAM_PUBLIC_CHANNEL_ID not configured on server' });
+    }
+
+    try {
+        const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+        await telegram.postToPublicChannel(message, {
+            inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]]
+        });
+        res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
 // --- CRON: Check expired and expiring subscriptions every hour ---
 cron.schedule('0 * * * *', async () => {
     console.log('[CRON] Checking expiring subscriptions...');
@@ -531,6 +566,35 @@ cron.schedule('0 * * * *', async () => {
                 );
             } catch (_) {}
         }
+    }
+});
+
+// --- CRON: Weekly subscriber count post to public channel (every Monday 10am) ---
+cron.schedule('0 10 * * 1', async () => {
+    if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_PUBLIC_CHANNEL_ID) return;
+
+    try {
+        const now = new Date();
+        const weekAgo = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString();
+
+        const [{ count: totalActive }, { count: newThisWeek }] = await Promise.all([
+            supabase.from('prachi_subscriptions').select('*', { count: 'exact', head: true }).eq('status', 'active').gt('expires_at', now.toISOString()),
+            supabase.from('prachi_subscriptions').select('*', { count: 'exact', head: true }).gte('started_at', weekAgo)
+        ]);
+
+        const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+        const msg =
+            `🔥 <b>VIP Community Update</b>\n\n` +
+            `<b>${newThisWeek || 0} new members</b> joined the exclusive VIP channel this week!\n\n` +
+            `👥 Total active VIP members: <b>${totalActive || 0}</b>\n\n` +
+            `Don't miss out — join the fastest growing exclusive community! 👇`;
+
+        await telegram.postToPublicChannel(msg, {
+            inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]]
+        });
+        console.log('[CRON] Weekly subscriber count posted to public channel');
+    } catch (e) {
+        console.error('[CRON] Weekly post failed:', e.message);
     }
 });
 

@@ -86,6 +86,11 @@ export default function Admin() {
     const [broadcastMsg, setBroadcastMsg] = useState('');
     const [broadcastLoading, setBroadcastLoading] = useState(false);
 
+    // Public Channel Promo
+    const DEFAULT_PROMO = `🔥 New exclusive content just dropped in the VIP channel!\n\n💎 Photos, videos & more — all locked for VIP members only.\n\n👇 Grab your access before the price goes up!`;
+    const [promoMsg, setPromoMsg] = useState(DEFAULT_PROMO);
+    const [promoLoading, setPromoLoading] = useState(false);
+
     const [offerData, setOfferData] = useState({
         original_price: 899,
         discounted_price: 199,
@@ -276,6 +281,27 @@ export default function Admin() {
             showNotify('Network error.', 'error');
         }
         setMaintenanceLoading(false);
+    };
+
+    const handlePostToPublic = async () => {
+        if (!promoMsg.trim()) return showNotify('Message cannot be empty', 'error');
+        setPromoLoading(true);
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/post-to-public`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ message: promoMsg })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showNotify('Promo posted to public channel!');
+            } else {
+                showNotify(data.error || 'Failed to post', 'error');
+            }
+        } catch {
+            showNotify('Network error.', 'error');
+        }
+        setPromoLoading(false);
     };
 
     const handleReactivateSub = async (id) => {
@@ -702,6 +728,37 @@ export default function Admin() {
                                     style={{ background: 'var(--rose)', color: '#fff', padding: '0.75rem 1.5rem', boxShadow: '0 0 15px rgba(244,63,94,0.3)' }}
                                 >
                                     {broadcastLoading ? <><Spinner light /> Transmitting...</> : <><Send size={16} /> Broadcast to {activeSubs.length} Users</>}
+                                </button>
+                            </div>
+                        </SectionCard>
+
+                        {/* Public Channel Promo */}
+                        <SectionCard
+                            title={<span style={{ color: 'var(--purple)' }}>Post to Public Channel</span>}
+                            icon={<Globe size={18} color="var(--purple)" />}
+                        >
+                            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: '1rem', lineHeight: 1.5 }}>
+                                Post a promo message to your <b>public channel</b> with a "Join VIP" button automatically attached. A weekly subscriber count post goes out every Monday automatically.
+                            </p>
+                            <textarea
+                                className="input-elegant"
+                                rows={5}
+                                value={promoMsg}
+                                onChange={e => setPromoMsg(e.target.value)}
+                                placeholder="Write your promo message..."
+                                style={{ border: '1px solid rgba(168,85,247,0.3)', background: 'rgba(168,85,247,0.02)' }}
+                            />
+                            <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: '1rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+                                <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
+                                    A <b style={{ color: 'var(--purple)' }}>Join VIP Now</b> button is auto-appended to every post.
+                                </p>
+                                <button
+                                    className="btn-gold"
+                                    onClick={handlePostToPublic}
+                                    disabled={promoLoading || !promoMsg.trim()}
+                                    style={{ background: 'var(--purple-gradient)', color: '#fff', padding: '0.75rem 1.5rem', boxShadow: '0 0 15px rgba(168,85,247,0.3)' }}
+                                >
+                                    {promoLoading ? <><Spinner light /> Posting...</> : <><Globe size={16} /> Post to Public Channel</>}
                                 </button>
                             </div>
                         </SectionCard>
