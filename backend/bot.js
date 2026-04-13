@@ -191,6 +191,20 @@ async function handleCommand(message) {
     // --- Admin commands ---
     const now = new Date().toISOString();
 
+    if (text === '/start' || text.startsWith('/start ')) {
+        await sendMessage(chatId,
+            `👑 <b>Admin Panel — Bot Commands</b>\n\n` +
+            `Here's everything you can do:\n\n` +
+            `📋 /subscribers — List all active VIP members\n` +
+            `🕐 /expired — List expired &amp; cancelled subs\n` +
+            `📊 /stats — Revenue &amp; subscriber statistics\n` +
+            `📢 /broadcast &lt;msg&gt; — DM all active subscribers\n` +
+            `👢 /kick &lt;username/phone&gt; — Kick &amp; cancel a user\n` +
+            `❓ /help — Show this message again`
+        );
+        return;
+    }
+
     if (text === '/subscribers' || text === '/subs') {
         const { data: subs } = await supabase.from('prachi_subscriptions')
             .select('*')
