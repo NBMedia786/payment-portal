@@ -793,17 +793,36 @@ cron.schedule('0 10 * * 1', async () => {
 // --- TELEGRAM TOOLS ---
 
 // Post a poll to VIP or public channel
+// In-memory history for polls and posted messages
+const postedPolls = [];
+const postedMessages = [];
+
 app.post('/api/admin/post-poll', verifyToken, async (req, res) => {
     const { question, options, channel } = req.body;
     if (!question || !options || options.length < 2) return res.status(400).json({ error: 'Question and at least 2 options required' });
     const channelId = channel === 'vip' ? process.env.TELEGRAM_CHANNEL_ID : process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
     if (!channelId) return res.status(400).json({ error: 'Channel ID not configured' });
     try {
-        await telegram.createPoll(channelId, question, options);
+        const result = await telegram.createPoll(channelId, question, options);
+        if (result.ok && result.result) {
+            postedPolls.unshift({ id: Date.now(), messageId: result.result.message_id, channelId, channel, question, options, sentAt: new Date().toISOString() });
+            if (postedPolls.length > 20) postedPolls.pop();
+        }
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
+});
+
+app.get('/api/admin/posted-polls', verifyToken, (req, res) => res.json(postedPolls));
+
+app.delete('/api/admin/posted-polls/:id', verifyToken, async (req, res) => {
+    const idx = postedPolls.findIndex(p => p.id === parseInt(req.params.id));
+    if (idx === -1) return res.status(404).json({ error: 'Not found' });
+    const poll = postedPolls[idx];
+    try { await telegram.deleteMessage(poll.channelId, poll.messageId); } catch (_) {}
+    postedPolls.splice(idx, 1);
+    res.json({ success: true });
 });
 
 // Post a countdown teaser to public channel (with optional pin)
@@ -817,9 +836,12 @@ app.post('/api/admin/post-countdown', verifyToken, async (req, res) => {
         `<i>VIP members only! 🔒</i>`;
     const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
     try {
+        const channelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
         const result = await telegram.postToPublicChannel(msg, keyboard);
-        if (result.ok && result.result && process.env.TELEGRAM_PUBLIC_CHANNEL_ID) {
-            try { await telegram.pinMessage(process.env.TELEGRAM_PUBLIC_CHANNEL_ID, result.result.message_id); } catch (_) {}
+        if (result.ok && result.result && channelId) {
+            try { await telegram.pinMessage(channelId, result.result.message_id); } catch (_) {}
+            postedMessages.unshift({ id: Date.now(), messageId: result.result.message_id, channelId, channel: 'public', text: msg, sentAt: new Date().toISOString() });
+            if (postedMessages.length > 20) postedMessages.pop();
         }
         res.json({ success: true });
     } catch (e) {
@@ -827,14 +849,50 @@ app.post('/api/admin/post-countdown', verifyToken, async (req, res) => {
     }
 });
 
+app.get('/api/admin/posted-messages', verifyToken, (req, res) => res.json(postedMessages));
+
+// Add user to VIP channel by generating a one-time invite link and sending it to them
+app.post('/api/admin/invite-user', verifyToken, async (req, res) => {
+    const { telegramUserId } = req.body;
+    if (!telegramUserId) return res.status(400).json({ error: 'telegramUserId required' });
+    if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_CHANNEL_ID) {
+        return res.status(400).json({ error: 'Telegram not configured' });
+    }
+    try {
+        // Unban first in case they were previously kicked
+        try { await telegram.unbanUser(telegramUserId); } catch (_) {}
+        // Generate a one-time invite link
+        const linkRes = await telegram.createInviteLink(86400);
+        const inviteUrl = linkRes.ok && linkRes.result ? linkRes.result.invite_link : null;
+        if (!inviteUrl) return res.status(500).json({ error: 'Could not generate invite link' });
+        // DM the invite link to the user
+        await telegram.sendMessage(telegramUserId,
+            `🎉 You've been added to the VIP channel!\n\nTap the link below to join:\n${inviteUrl}`
+        );
+        res.json({ success: true, inviteUrl });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+app.delete('/api/admin/posted-messages/:id', verifyToken, async (req, res) => {
+    const idx = postedMessages.findIndex(p => p.id === parseInt(req.params.id));
+    if (idx === -1) return res.status(404).json({ error: 'Not found' });
+    const pm = postedMessages[idx];
+    try { await telegram.deleteMessage(pm.channelId, pm.messageId); } catch (_) {}
+    postedMessages.splice(idx, 1);
+    res.json({ success: true });
+});
+
 // --- POST SCHEDULER ---
 const scheduledPosts = [];
 
 app.post('/api/admin/schedule-post', verifyToken, (req, res) => {
-    const { message, channel, scheduledAt, countdownHours, countdownMessage } = req.body;
-    if (!message || !scheduledAt) return res.status(400).json({ error: 'Message and scheduledAt required' });
+    const { message, channel, scheduledAt, countdownHours, countdownMessage, photoUrl } = req.body;
+    if (!scheduledAt) return res.status(400).json({ error: 'scheduledAt required' });
+    if (!message && !photoUrl) return res.status(400).json({ error: 'Message or photo required' });
     const id = Date.now();
-    scheduledPosts.push({ id, message, channel: channel || 'vip', scheduledAt, countdownHours: countdownHours || null, countdownMessage: countdownMessage || '', sent: false, countdownSent: false, pinnedMessageId: null });
+    scheduledPosts.push({ id, message: message || '', channel: channel || 'vip', scheduledAt, countdownHours: countdownHours || null, countdownMessage: countdownMessage || '', photoUrl: photoUrl || null, sent: false, countdownSent: false, pinnedMessageId: null });
     console.log(`[SCHEDULER] Post scheduled for ${scheduledAt} → ${channel}`);
     res.json({ success: true, id });
 });
@@ -883,8 +941,13 @@ cron.schedule('* * * * *', async () => {
         // Send main post when due
         if (now >= scheduledTime) {
             try {
+                const backendUrl = process.env.BACKEND_URL || frontendUrl;
                 if (post.channel === 'vip') {
-                    await telegram.postToVipChannel(post.message);
+                    if (post.photoUrl) {
+                        await telegram.sendPhotoToVipChannel(`${backendUrl}${post.photoUrl}`, post.message || '🔥 New content just dropped!');
+                    } else {
+                        await telegram.postToVipChannel(post.message);
+                    }
                     // DM all active subscribers
                     const { data: subs } = await supabase.from('prachi_subscriptions')
                         .select('telegram_user_id').eq('status', 'active')
@@ -896,7 +959,12 @@ cron.schedule('* * * * *', async () => {
                         }
                     }
                 } else {
-                    await telegram.postToPublicChannel(post.message, { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] });
+                    const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
+                    if (post.photoUrl) {
+                        await telegram.sendTeaserPhoto(`${backendUrl}${post.photoUrl}`, post.message || '', keyboard);
+                    } else {
+                        await telegram.postToPublicChannel(post.message, keyboard);
+                    }
                 }
                 // Unpin countdown if it was pinned
                 if (post.pinnedMessageId && process.env.TELEGRAM_PUBLIC_CHANNEL_ID) {

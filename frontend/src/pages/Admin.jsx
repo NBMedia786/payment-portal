@@ -140,8 +140,15 @@ export default function Admin() {
     const [scheduleAt, setScheduleAt] = useState('');
     const [scheduleCountdownHours, setScheduleCountdownHours] = useState('');
     const [scheduleCountdownMsg, setScheduleCountdownMsg] = useState('');
+    const [schedulePhotoUrl, setSchedulePhotoUrl] = useState('');
+    const [schedulePhotoLoading, setSchedulePhotoLoading] = useState(false);
     const [scheduledPosts, setScheduledPosts] = useState([]);
     const [scheduleLoading, setScheduleLoading] = useState(false);
+    const [postedPolls, setPostedPolls] = useState([]);
+    const [postedMessages, setPostedMessages] = useState([]);
+    const [inviteUserId, setInviteUserId] = useState('');
+    const [inviteLoading, setInviteLoading] = useState(false);
+    const schedulePhotoRef = useRef(null);
     const [subscriptions, setSubscriptions] = useState([]);
     const [subStats, setSubStats] = useState({ total: 0, active: 0, cancelled: 0, expired: 0 });
     const fileInputRef = useRef(null);
@@ -164,10 +171,14 @@ export default function Admin() {
             fetchPreviews();
             fetchSubscriptions();
             fetchScheduledPosts();
+            fetchPostedPolls();
+            fetchPostedMessages();
             interval = setInterval(() => {
                 fetchPreviews();
                 fetchSubscriptions();
                 fetchScheduledPosts();
+                fetchPostedPolls();
+                fetchPostedMessages();
             }, 5000);
         }
         return () => { if (interval) clearInterval(interval); };
@@ -504,6 +515,68 @@ export default function Admin() {
         }
     };
 
+    const fetchPostedPolls = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/posted-polls`, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (res.ok) setPostedPolls(await res.json());
+        } catch {}
+    };
+
+    const fetchPostedMessages = async () => {
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/posted-messages`, { headers: { 'Authorization': `Bearer ${token}` } });
+            if (res.ok) setPostedMessages(await res.json());
+        } catch {}
+    };
+
+    const handleDeletePoll = async (id) => {
+        try {
+            await fetch(`${API_BASE}/api/admin/posted-polls/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+            fetchPostedPolls();
+            showNotify('Poll deleted from Telegram.');
+        } catch { showNotify('Error deleting poll.', 'error'); }
+    };
+
+    const handleDeletePostedMessage = async (id) => {
+        try {
+            await fetch(`${API_BASE}/api/admin/posted-messages/${id}`, { method: 'DELETE', headers: { 'Authorization': `Bearer ${token}` } });
+            fetchPostedMessages();
+            showNotify('Message deleted from Telegram.');
+        } catch { showNotify('Error deleting message.', 'error'); }
+    };
+
+    const handleSchedulePhotoUpload = async (e) => {
+        const file = e.target.files[0];
+        if (!file) return;
+        setSchedulePhotoLoading(true);
+        const formData = new FormData();
+        formData.append('media', file);
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/upload`, { method: 'POST', headers: { 'Authorization': `Bearer ${token}` }, body: formData });
+            const data = await res.json();
+            if (data.url) { setSchedulePhotoUrl(data.url); showNotify('Photo uploaded!'); }
+            else showNotify('Upload failed.', 'error');
+        } catch { showNotify('Upload error.', 'error'); }
+        setSchedulePhotoLoading(false);
+        e.target.value = '';
+    };
+
+    const handleInviteUser = async () => {
+        if (!inviteUserId.trim()) { showNotify('Enter a Telegram User ID.', 'error'); return; }
+        setInviteLoading(true);
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/invite-user`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ telegramUserId: inviteUserId.trim() })
+            });
+            const d = await res.json();
+            if (d.success) { showNotify('Invite sent! User will receive a DM with the link.'); setInviteUserId(''); }
+            else showNotify(d.error || 'Failed.', 'error');
+        } catch { showNotify('Error.', 'error'); }
+        setInviteLoading(false);
+    };
+
     const fetchScheduledPosts = async () => {
         try {
             const res = await fetch(`${API_BASE}/api/admin/scheduled-posts`, { headers: { 'Authorization': `Bearer ${token}` } });
@@ -553,12 +626,13 @@ export default function Admin() {
                     message: scheduleMsg, channel: scheduleChannel,
                     scheduledAt: new Date(scheduleAt).toISOString(),
                     countdownHours: scheduleCountdownHours ? parseInt(scheduleCountdownHours) : null,
-                    countdownMessage: scheduleCountdownMsg
+                    countdownMessage: scheduleCountdownMsg,
+                    photoUrl: schedulePhotoUrl || null
                 })
             });
             if (res.ok) {
                 showNotify('Post scheduled!');
-                setScheduleMsg(''); setScheduleAt(''); setScheduleCountdownHours(''); setScheduleCountdownMsg('');
+                setScheduleMsg(''); setScheduleAt(''); setScheduleCountdownHours(''); setScheduleCountdownMsg(''); setSchedulePhotoUrl('');
                 fetchScheduledPosts();
             } else { const d = await res.json(); showNotify(d.error || 'Failed', 'error'); }
         } catch { showNotify('Error.', 'error'); }
@@ -1590,6 +1664,57 @@ export default function Admin() {
                             </div>
                         </SectionCard>
 
+                        {/* Poll History */}
+                        {postedPolls.length > 0 && (
+                            <SectionCard title={`Poll History (${postedPolls.length})`} icon={<BarChart2 size={16} color="var(--text-secondary)" />}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    {postedPolls.map(p => (
+                                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', background: 'var(--surface)', borderRadius: '10px', padding: '0.65rem 1rem', border: '1px solid var(--border)' }}>
+                                            <div>
+                                                <span style={{ fontSize: '0.72rem', fontWeight: 700, padding: '0.1rem 0.5rem', borderRadius: '4px', marginRight: '0.5rem', background: p.channel === 'vip' ? 'rgba(229,165,75,0.15)' : 'rgba(168,85,247,0.15)', color: p.channel === 'vip' ? 'var(--gold)' : 'var(--purple)' }}>{p.channel === 'vip' ? '💎 VIP' : '📢 Public'}</span>
+                                                <span style={{ fontSize: '0.82rem', color: 'var(--text-primary)' }}>{p.question}</span>
+                                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)', marginLeft: '0.5rem' }}>{new Date(p.sentAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                            </div>
+                                            <button onClick={() => handleDeletePoll(p.id)} title="Delete from Telegram" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--rose)', padding: '0.2rem' }}><Trash2 size={15} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </SectionCard>
+                        )}
+
+                        {/* Posted Messages History */}
+                        {postedMessages.length > 0 && (
+                            <SectionCard title={`Posted Messages History (${postedMessages.length})`} icon={<MessageSquare size={16} color="var(--text-secondary)" />}>
+                                <div style={{ display: 'flex', flexDirection: 'column', gap: '0.5rem' }}>
+                                    {postedMessages.map(p => (
+                                        <div key={p.id} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', background: 'var(--surface)', borderRadius: '10px', padding: '0.65rem 1rem', border: '1px solid var(--border)', gap: '0.75rem' }}>
+                                            <div style={{ flex: 1, minWidth: 0 }}>
+                                                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>{new Date(p.sentAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
+                                                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap', marginTop: '0.2rem' }}>{p.text}</p>
+                                            </div>
+                                            <button onClick={() => handleDeletePostedMessage(p.id)} title="Delete from Telegram" style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--rose)', padding: '0.2rem', flexShrink: 0 }}><Trash2 size={15} /></button>
+                                        </div>
+                                    ))}
+                                </div>
+                            </SectionCard>
+                        )}
+
+                        {/* Invite User to VIP */}
+                        <SectionCard title="Add User to VIP Channel" icon={<Users size={16} color="var(--gold)" />}>
+                            <p style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
+                                Enter the user's <b>Telegram User ID</b> to send them a one-time VIP invite link via DM. They must have started the bot to receive it.
+                            </p>
+                            <div style={{ display: 'flex', gap: '0.75rem', alignItems: 'flex-end', flexWrap: 'wrap' }}>
+                                <div style={{ flex: 1, minWidth: '200px' }}>
+                                    <label className="form-label">Telegram User ID</label>
+                                    <input className="input-elegant" value={inviteUserId} onChange={e => setInviteUserId(e.target.value)} placeholder="e.g. 123456789" />
+                                </div>
+                                <button className="btn-gold" onClick={handleInviteUser} disabled={inviteLoading}>
+                                    {inviteLoading ? <><Spinner light /> Sending...</> : <><Send size={15} /> Send Invite</>}
+                                </button>
+                            </div>
+                        </SectionCard>
+
                         {/* Post Scheduler */}
                         <SectionCard title="Schedule a Post" icon={<Calendar size={16} color="var(--gold)" />}>
                             <p style={{ fontSize: '0.83rem', color: 'var(--text-secondary)', marginBottom: '1rem' }}>
@@ -1605,7 +1730,22 @@ export default function Admin() {
                                     }}>{ch === 'vip' ? '💎 VIP Channel' : '📢 Public Channel'}</button>
                                 ))}
                             </div>
-                            <textarea className="input-elegant" rows={3} value={scheduleMsg} onChange={e => setScheduleMsg(e.target.value)} placeholder="Write your post message..." style={{ marginBottom: '0.75rem' }} />
+                            <textarea className="input-elegant" rows={3} value={scheduleMsg} onChange={e => setScheduleMsg(e.target.value)} placeholder="Write your post caption or message..." style={{ marginBottom: '0.75rem' }} />
+                            <div style={{ marginBottom: '0.75rem' }}>
+                                <label className="form-label">Attach Photo (optional)</label>
+                                <input type="file" ref={schedulePhotoRef} style={{ display: 'none' }} accept="image/*" onChange={handleSchedulePhotoUpload} />
+                                {schedulePhotoUrl ? (
+                                    <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', background: 'var(--surface)', border: '1px solid var(--border)', borderRadius: '10px', padding: '0.6rem 0.9rem' }}>
+                                        <img src={`${API_BASE}${schedulePhotoUrl}`} alt="preview" style={{ width: 48, height: 48, objectFit: 'cover', borderRadius: '6px' }} />
+                                        <span style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', flex: 1 }}>Photo attached</span>
+                                        <button onClick={() => setSchedulePhotoUrl('')} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--rose)' }}><X size={15} /></button>
+                                    </div>
+                                ) : (
+                                    <button onClick={() => schedulePhotoRef.current?.click()} disabled={schedulePhotoLoading} style={{ background: 'var(--surface)', border: '1px dashed var(--border)', borderRadius: '10px', padding: '0.6rem 1rem', cursor: 'pointer', color: 'var(--text-secondary)', fontSize: '0.82rem', display: 'flex', alignItems: 'center', gap: '0.4rem' }}>
+                                        {schedulePhotoLoading ? <><Spinner /> Uploading...</> : <><Upload size={14} /> Upload Photo</>}
+                                    </button>
+                                )}
+                            </div>
                             <div style={{ display: 'flex', gap: '0.75rem', marginBottom: '0.75rem', flexWrap: 'wrap' }}>
                                 <div style={{ flex: 1, minWidth: '200px' }}>
                                     <label className="form-label">Schedule date & time</label>
@@ -1650,7 +1790,10 @@ export default function Admin() {
                                                     <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>📅 {new Date(p.scheduledAt).toLocaleString('en-IN', { day: '2-digit', month: 'short', hour: '2-digit', minute: '2-digit' })}</span>
                                                     {p.countdownHours && <span style={{ fontSize: '0.72rem', color: 'var(--gold)' }}>⏰ Countdown {p.countdownHours}h before</span>}
                                                 </div>
-                                                <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.message}</p>
+                                                <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem', marginTop: '0.2rem' }}>
+                                                    {p.photoUrl && <img src={`${API_BASE}${p.photoUrl}`} alt="" style={{ width: 32, height: 32, objectFit: 'cover', borderRadius: '4px', flexShrink: 0 }} />}
+                                                    <p style={{ fontSize: '0.82rem', color: 'var(--text-secondary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{p.message || '📷 Photo post'}</p>
+                                                </div>
                                             </div>
                                             <button onClick={() => handleDeleteScheduled(p.id)} style={{ background: 'none', border: 'none', cursor: 'pointer', color: 'var(--rose)', padding: '0.2rem' }}><Trash2 size={15} /></button>
                                         </div>

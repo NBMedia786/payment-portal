@@ -77,6 +77,10 @@ async function sendMessage(chatId, text, replyMarkup = null) {
     return callTelegramAPI('sendMessage', data);
 }
 
+async function deleteMessage(chatId, messageId) {
+    return callTelegramAPI('deleteMessage', { chat_id: chatId, message_id: messageId });
+}
+
 async function createPoll(chatId, question, options) {
     return callTelegramAPI('sendPoll', {
         chat_id: chatId,
@@ -148,6 +152,7 @@ module.exports = {
     postToVipChannel,
     sendPhotoToVipChannel,
     sendTeaserPhoto,
+    deleteMessage,
     createPoll,
     pinMessage,
     unpinMessage,
