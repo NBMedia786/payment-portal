@@ -1,4 +1,4 @@
-﻿import { useMemo, useState } from 'react';
+import { useMemo, useState } from 'react';
 import {
   BookOpen,
   ShoppingCart,
@@ -318,43 +318,79 @@ export default function MaintenanceEbook() {
       <div style={{ maxWidth: 1650, margin: '0 auto' }}>
         <div
           style={{
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 18,
-            padding: '1rem 1.2rem',
+            border: '1px solid rgba(96,165,250,0.28)',
+            borderRadius: 22,
+            padding: '1.15rem 1.3rem',
             marginBottom: '1rem',
-            background: 'linear-gradient(135deg, rgba(38,90,255,0.22), rgba(26,188,156,0.18))',
-            display: 'flex',
+            background:
+              'linear-gradient(110deg, rgba(18,29,49,0.96) 0%, rgba(24,52,99,0.94) 34%, rgba(15,106,126,0.9) 65%, rgba(22,34,58,0.95) 100%)',
+            backgroundSize: '220% 220%',
+            animation: 'heroFlow 8s ease-in-out infinite',
+            display: 'grid',
+            gridTemplateColumns: '1fr auto',
+            gap: '.85rem 1rem',
             alignItems: 'center',
-            justifyContent: 'space-between',
-            gap: '1rem',
-            flexWrap: 'wrap'
+            position: 'relative',
+            overflow: 'hidden'
           }}
         >
-          <div>
-            <div style={{ display: 'flex', alignItems: 'center', gap: '.55rem', fontWeight: 800 }}>
+          <div
+            style={{
+              position: 'absolute',
+              width: 280,
+              height: 280,
+              borderRadius: '50%',
+              right: -70,
+              top: -120,
+              background: 'radial-gradient(circle, rgba(56,189,248,0.3), transparent 65%)',
+              animation: 'orbPulse 4s ease-in-out infinite',
+              pointerEvents: 'none'
+            }}
+          />
+          <div style={{ position: 'relative', zIndex: 1 }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '.55rem', fontWeight: 900, letterSpacing: '.01em' }}>
               <BookOpen size={20} />
-              Premium Ebook Collection
+              <span style={{ fontSize: '1.07rem' }}>Premium Ebook Collection</span>
             </div>
-            <p style={{ margin: '.35rem 0 0', color: '#d6deea', fontSize: '.92rem' }}>
-              Discover bestselling books across business, finance, productivity, and personal growth.
+            <p style={{ margin: '.42rem 0 .62rem', color: '#d9e8ff', fontSize: '.9rem' }}>
+              Curated bestselling titles across business, finance, productivity, leadership, and personal growth.
             </p>
+            <div style={{ display: 'flex', gap: '.45rem', flexWrap: 'wrap' }}>
+              <span style={heroChip('rgba(56,189,248,0.18)')}>Instant Download</span>
+              <span style={heroChip('rgba(16,185,129,0.18)')}>Secure Checkout</span>
+              <span style={heroChip('rgba(168,85,247,0.18)')}>Curated Bestsellers</span>
+            </div>
           </div>
           <div
             style={{
-              display: 'inline-flex',
-              alignItems: 'center',
-              gap: '.45rem',
-              border: '1px solid rgba(255,255,255,0.22)',
-              borderRadius: 999,
-              padding: '.4rem .7rem',
-              background: 'rgba(255,255,255,0.08)',
-              color: '#d8ecff',
-              fontSize: '.83rem',
-              fontWeight: 700
+              position: 'relative',
+              zIndex: 1,
+              display: 'grid',
+              gap: '.45rem'
             }}
           >
-            <Sparkles size={14} />
-            Trusted by 25,000+ readers
+            <div
+              style={{
+                display: 'inline-flex',
+                alignItems: 'center',
+                justifyContent: 'center',
+                gap: '.45rem',
+                border: '1px solid rgba(255,255,255,0.22)',
+                borderRadius: 999,
+                padding: '.42rem .78rem',
+                background: 'rgba(255,255,255,0.1)',
+                color: '#e7f3ff',
+                fontSize: '.82rem',
+                fontWeight: 700,
+                whiteSpace: 'nowrap'
+              }}
+            >
+              <Sparkles size={14} />
+              Trusted by 25,000+ readers
+            </div>
+            <div style={{ textAlign: 'right', color: '#cde4ff', fontSize: '.78rem', opacity: 0.92 }}>
+              14+ curated titles · daily offers
+            </div>
           </div>
         </div>
 
@@ -651,6 +687,17 @@ export default function MaintenanceEbook() {
           onRemove={() => remove(selectedBook.id)}
         />
       )}
+      <style>{`
+        @keyframes heroFlow {
+          0% { background-position: 0% 50%; }
+          50% { background-position: 100% 50%; }
+          100% { background-position: 0% 50%; }
+        }
+        @keyframes orbPulse {
+          0%, 100% { transform: scale(1); opacity: .6; }
+          50% { transform: scale(1.1); opacity: 1; }
+        }
+      `}</style>
     </div>
   );
 }
@@ -845,5 +892,17 @@ function tagStyle(type) {
     fontSize: '.68rem',
     padding: '.15rem .45rem',
     fontWeight: 800
+  };
+}
+
+function heroChip(bg) {
+  return {
+    border: '1px solid rgba(255,255,255,0.24)',
+    borderRadius: 999,
+    padding: '.22rem .58rem',
+    background: bg,
+    color: '#dff0ff',
+    fontSize: '.73rem',
+    fontWeight: 700
   };
 }
