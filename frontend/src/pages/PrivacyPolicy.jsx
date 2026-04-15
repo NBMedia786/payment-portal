@@ -1,51 +1,46 @@
 import React from 'react';
+import PolicyLayout from './PolicyLayout';
 
 export default function PrivacyPolicy() {
+  const sections = [
+    {
+      heading: 'Information We Collect',
+      body:
+        'We may collect name, phone number, email address, payment metadata (via secure gateways), device/IP details, and order history to provide digital access and support.'
+    },
+    {
+      heading: 'How We Use Information',
+      body:
+        'We process data to complete transactions, deliver purchased content, respond to support requests, improve platform reliability, and prevent abuse/fraud.'
+    },
+    {
+      heading: 'Payment Security',
+      body:
+        'Payments are handled through trusted third-party processors. We do not store complete card numbers, CVV, or confidential UPI PIN credentials on our servers.'
+    },
+    {
+      heading: 'Data Sharing',
+      body:
+        'We never sell personal data. Limited information may be shared with payment providers, infrastructure partners, or legal authorities only when necessary.'
+    },
+    {
+      heading: 'Data Retention',
+      body:
+        'Transaction and account records may be retained for legal, tax, fraud-prevention, and service continuity obligations.'
+    },
+    {
+      heading: 'Your Rights',
+      body:
+        'You may request correction or deletion of eligible account data by contacting support, subject to statutory record-retention requirements.'
+    }
+  ];
+
   return (
-    <div style={{ minHeight: '100vh', background: '#0b1020', color: '#e6edf7', padding: '2rem 1rem' }}>
-      <div style={{ maxWidth: 900, margin: '0 auto', lineHeight: 1.7 }}>
-        <h1 style={{ marginTop: 0 }}>Privacy Policy</h1>
-        <p><strong>Effective Date:</strong> 09 April 2026</p>
-        <p>
-          This Privacy Policy explains how Prachi VIP collects, uses, and protects your information when
-          you use our website and digital products.
-        </p>
-
-        <h2>1. Information We Collect</h2>
-        <p>
-          We may collect name, phone number, email address, payment details (through secure payment gateways),
-          and order history to provide digital product access and support.
-        </p>
-
-        <h2>2. How We Use Information</h2>
-        <p>
-          We use collected information to process orders, grant access to purchased content, provide support,
-          prevent fraud, and improve service quality.
-        </p>
-
-        <h2>3. Payment Security</h2>
-        <p>
-          Payments are processed through trusted third-party providers (e.g., Razorpay/UPI gateways). We do not
-          store full card or UPI credentials on our servers.
-        </p>
-
-        <h2>4. Data Sharing</h2>
-        <p>
-          We do not sell your personal data. We may share limited information only with payment processors,
-          analytics services, or legal authorities when required by law.
-        </p>
-
-        <h2>5. Data Retention</h2>
-        <p>
-          We retain transaction and account records for as long as needed for legal, accounting, and service
-          continuity requirements.
-        </p>
-
-        <h2>6. Contact</h2>
-        <p>
-          For privacy-related queries, contact us at <strong>support@prachivip.in</strong>.
-        </p>
-      </div>
-    </div>
+    <PolicyLayout
+      title="Privacy Policy"
+      effectiveDate="09 April 2026"
+      intro="This Privacy Policy explains how Prachi VIP collects, uses, and safeguards information when you access our website and digital products."
+      sections={sections}
+    />
   );
 }
