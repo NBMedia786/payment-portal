@@ -121,6 +121,14 @@ async function sendPhotoToVipChannel(photoUrl, caption, replyMarkup = null) {
     return callTelegramAPI('sendPhoto', data);
 }
 
+async function sendVideoToVipChannel(videoUrl, caption, replyMarkup = null) {
+    const channelId = process.env.TELEGRAM_CHANNEL_ID;
+    if (!channelId) throw new Error('TELEGRAM_CHANNEL_ID not set');
+    const data = { chat_id: channelId, video: videoUrl, caption, parse_mode: 'HTML' };
+    if (replyMarkup) data.reply_markup = replyMarkup;
+    return callTelegramAPI('sendVideo', data);
+}
+
 async function postToPublicChannel(text, replyMarkup = null) {
     const publicChannelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
     if (!publicChannelId) throw new Error('TELEGRAM_PUBLIC_CHANNEL_ID not set');
@@ -143,6 +151,19 @@ async function sendTeaserPhoto(photoUrl, caption, replyMarkup = null) {
     return callTelegramAPI('sendPhoto', data);
 }
 
+async function sendVideoToPublicChannel(videoUrl, caption, replyMarkup = null) {
+    const publicChannelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
+    if (!publicChannelId) throw new Error('TELEGRAM_PUBLIC_CHANNEL_ID not set');
+    const data = {
+        chat_id: publicChannelId,
+        video: videoUrl,
+        caption,
+        parse_mode: 'HTML'
+    };
+    if (replyMarkup) data.reply_markup = replyMarkup;
+    return callTelegramAPI('sendVideo', data);
+}
+
 module.exports = {
     kickUser,
     unbanUser,
@@ -151,7 +172,9 @@ module.exports = {
     postToPublicChannel,
     postToVipChannel,
     sendPhotoToVipChannel,
+    sendVideoToVipChannel,
     sendTeaserPhoto,
+    sendVideoToPublicChannel,
     deleteMessage,
     createPoll,
     pinMessage,

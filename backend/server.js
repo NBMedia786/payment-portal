@@ -9,6 +9,7 @@ const fs = require('fs');
 const path = require('path');
 const cron = require('node-cron');
 const sharp = require('sharp');
+const { execFile } = require('child_process');
 const telegram = require('./telegram');
 const imbpay = require('./imbpay');
 const { pollUpdates } = require('./bot');
@@ -70,6 +71,30 @@ app.get('/api/public/data', async (req, res) => {
 
 // 2. IMB — Create a payment order
 const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
+const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
+
+function createBlurredTeaserVideo(inputPath, outputPath) {
+    return new Promise((resolve, reject) => {
+        const args = [
+            '-y',
+            '-i', inputPath,
+            '-vf', 'scale=iw*0.85:ih*0.85,boxblur=20:10,eq=brightness=-0.04:saturation=0.82',
+            '-c:v', 'libx264',
+            '-preset', 'veryfast',
+            '-crf', '30',
+            '-an',
+            outputPath
+        ];
+
+        execFile(FFMPEG_PATH, args, { windowsHide: true }, (error, stdout, stderr) => {
+            if (error) {
+                reject(new Error(stderr || error.message || 'ffmpeg failed'));
+                return;
+            }
+            resolve({ stdout, stderr });
+        });
+    });
+}
 
 app.post('/api/payment/create', async (req, res) => {
     const { phone, telegramUsername, buyerName, email } = req.body;
@@ -365,6 +390,7 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
         const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
         const backendUrl = process.env.BACKEND_URL || frontendUrl;
         const isImage = (type || 'image') === 'image';
+        const mediaUrl = url ? `${backendUrl}${url}` : '';
         const contentType = isImage ? '📸 New Photo' : '🎬 New Video';
 
         (async () => {
@@ -372,12 +398,18 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                 if (dest === 'vip') {
                     // --- Post actual content to VIP channel ---
                     const vipCaption = `${contentType} just dropped! 🔥\n\n<i>Enjoy the exclusive content!</i>`;
-                    if (isImage && url) {
-                        const photoUrl = `${backendUrl}${url}`;
+                    if (isImage && mediaUrl) {
                         try {
-                            await telegram.sendPhotoToVipChannel(photoUrl, vipCaption);
+                            await telegram.sendPhotoToVipChannel(mediaUrl, vipCaption);
                         } catch (e) {
                             console.error('[POST-VIP] Photo failed, sending text:', e.message);
+                            await telegram.postToVipChannel(vipCaption).catch(() => {});
+                        }
+                    } else if (!isImage && mediaUrl) {
+                        try {
+                            await telegram.sendVideoToVipChannel(mediaUrl, vipCaption);
+                        } catch (e) {
+                            console.error('[POST-VIP] Video failed, sending text:', e.message);
                             await telegram.postToVipChannel(vipCaption).catch(() => {});
                         }
                     } else {
@@ -419,6 +451,23 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                                 console.error('[POST-VIP] Blur failed, sending text teaser:', e.message);
                                 telegram.postToPublicChannel(teaserCaption, keyboard).catch(() => {});
                             }
+                        } else if (!isImage && mediaUrl) {
+                            const filename = url ? url.replace('/uploads/', '') : '';
+                            const inputPath = filename ? path.join('uploads', filename) : '';
+                            const teaserFilename = `tease-${Date.now()}-${path.parse(filename || 'video').name}.mp4`;
+                            const teaserPath = path.join('uploads', teaserFilename);
+                            try {
+                                if (!inputPath || !fs.existsSync(inputPath)) {
+                                    throw new Error('Original video file not found for teaser generation');
+                                }
+                                await createBlurredTeaserVideo(inputPath, teaserPath);
+                                const teaserUrl = `${backendUrl}/uploads/${teaserFilename}`;
+                                await telegram.sendVideoToPublicChannel(teaserUrl, teaserCaption, keyboard);
+                                fs.unlink(teaserPath, () => {});
+                            } catch (e) {
+                                console.error('[POST-VIP] Blurred teaser video failed, sending text:', e.message);
+                                telegram.postToPublicChannel(teaserCaption, keyboard).catch(() => {});
+                            }
                         } else {
                             telegram.postToPublicChannel(teaserCaption, keyboard).catch(() => {});
                         }
@@ -429,12 +478,18 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                     const publicCaption = `${contentType} just posted! 🎉`;
                     const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
 
-                    if (isImage && url) {
-                        const photoUrl = `${backendUrl}${url}`;
+                    if (isImage && mediaUrl) {
                         try {
-                            await telegram.sendTeaserPhoto(photoUrl, publicCaption, keyboard);
+                            await telegram.sendTeaserPhoto(mediaUrl, publicCaption, keyboard);
                         } catch (e) {
                             console.error('[POST-PUBLIC] Photo failed, sending text:', e.message);
+                            telegram.postToPublicChannel(publicCaption, keyboard).catch(() => {});
+                        }
+                    } else if (!isImage && mediaUrl) {
+                        try {
+                            await telegram.sendVideoToPublicChannel(mediaUrl, publicCaption, keyboard);
+                        } catch (e) {
+                            console.error('[POST-PUBLIC] Video failed, sending text:', e.message);
                             telegram.postToPublicChannel(publicCaption, keyboard).catch(() => {});
                         }
                     } else {
