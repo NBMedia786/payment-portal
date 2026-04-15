@@ -332,8 +332,10 @@ async function handleSupportTicket(message) {
         }
 
         // Allow admin to reply
-        if (message.reply_to_message && message.reply_to_message.text) {
-            const ticketMatch = message.reply_to_message.text.match(/\[Ticket UserID: (\d+)\]/);
+        const replyOrig = message.reply_to_message;
+        if (replyOrig && (replyOrig.text || replyOrig.caption)) {
+            const replyText = replyOrig.text || replyOrig.caption || '';
+            const ticketMatch = replyText.match(/\[Ticket UserID: (\d+)\]/) || replyText.match(/User ID:\s*(?:<code>)?(\d+)/i);
             if (ticketMatch) {
                 const targetUserId = ticketMatch[1];
                 try {
@@ -371,7 +373,8 @@ async function handleSupportTicket(message) {
                     `👤 Name: ${fullName}\n` +
                     `🔖 Username: ${username}\n` +
                     `🆔 User ID: <code>${userId}</code>\n\n` +
-                    `<i>Screenshot forwarded below.</i>`
+                    `<i>👉 Swipe right on THIS text message to reply to the user.</i>\n` +
+                    `<i>(Screenshot forwarded below)</i>`
                 );
                 await callTelegramAPI('copyMessage', {
                     chat_id: adminId,
@@ -382,14 +385,15 @@ async function handleSupportTicket(message) {
         }
 
         pendingPaymentProofUsers.delete(String(userId));
-        await sendMessage(userId, `✅ Screenshot received! Our team will verify and share your VIP access soon.`);
+        const userMention = message.from.username ? `@${message.from.username}` : (message.from.first_name || 'there');
+        await sendMessage(userId, `Thank you for subscribing to my VIP channel ${userMention}, we will be adding u to the VIP channel shortly.`);
         return;
     }
 
     // Normal user creates ticket
     for (const adminId of ADMIN_IDS) {
         try {
-            await sendMessage(adminId, `📩 <b>Support Ticket from @${message.from.username || message.from.first_name}</b>\n[Ticket UserID: ${userId}]\n\n<i>Swipe right on the message below to reply to them anonymously.</i>`);
+            await sendMessage(adminId, `📩 <b>Support Ticket from @${message.from.username || message.from.first_name}</b>\n[Ticket UserID: ${userId}]\n\n<i>👉 Swipe right on THIS message to reply to them anonymously.</i>`);
             await callTelegramAPI('copyMessage', {
                 chat_id: adminId,
                 from_chat_id: message.chat.id,
