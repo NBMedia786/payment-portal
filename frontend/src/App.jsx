@@ -32,6 +32,7 @@ function AppRoutes({ maintenanceMode, settings }) {
 function App() {
   const [maintenanceMode, setMaintenanceMode] = useState(false);
   const [settings, setSettings] = useState(null);
+  const [bootLoading, setBootLoading] = useState(true);
 
   useEffect(() => {
     fetch(apiUrl('/api/public/data'))
@@ -42,8 +43,41 @@ function App() {
           if (data.settings.maintenance_mode == 1) setMaintenanceMode(true);
         }
       })
-      .catch(() => {});
+      .catch(() => {})
+      .finally(() => setBootLoading(false));
   }, []);
+
+  if (bootLoading) {
+    return (
+      <div style={{
+        minHeight: '100vh',
+        display: 'grid',
+        placeItems: 'center',
+        background: '#080b12',
+        color: '#d9e8ff',
+        fontFamily: 'Inter, sans-serif'
+      }}>
+        <div style={{ textAlign: 'center' }}>
+          <div style={{
+            width: 42,
+            height: 42,
+            borderRadius: '50%',
+            border: '3px solid rgba(255,255,255,0.18)',
+            borderTopColor: '#60a5fa',
+            margin: '0 auto .8rem',
+            animation: 'appSpin 0.9s linear infinite'
+          }} />
+          <div style={{ fontSize: '.9rem', color: '#aac4e8' }}>Loading...</div>
+        </div>
+        <style>{`
+          @keyframes appSpin {
+            from { transform: rotate(0deg); }
+            to { transform: rotate(360deg); }
+          }
+        `}</style>
+      </div>
+    );
+  }
 
   return (
     <BrowserRouter>
