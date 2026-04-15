@@ -800,7 +800,8 @@ async function handleCommand(message) {
         }
         try {
             const { postToVipChannel, postToPublicChannel } = require('./telegram');
-            target === 'vip' ? await postToVipChannel(msgText) : await postToPublicChannel(msgText);
+            const result = target === 'vip' ? await postToVipChannel(msgText) : await postToPublicChannel(msgText);
+            if (result && !result.ok) throw new Error(result.description || 'Unknown Telegram error');
             await sendMessage(chatId, `✅ Message posted to ${target.toUpperCase()} channel!`);
         } catch (e) {
             await sendMessage(chatId, `❌ Failed to post: ${e.message}`);
