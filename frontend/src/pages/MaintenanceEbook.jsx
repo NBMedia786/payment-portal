@@ -4,35 +4,67 @@ import { BookOpen, ShoppingCart, Plus, Minus, Trash2, CreditCard } from 'lucide-
 const EBOOKS = [
   {
     id: 'ebk-1',
-    title: 'Digital Marketing Blueprint',
-    author: 'A. Sharma',
-    price: 299,
+    title: 'Atomic Habits',
+    author: 'James Clear',
+    price: 399,
     cover: 'https://images.unsplash.com/photo-1512820790803-83ca734da794?auto=format&fit=crop&w=500&q=80',
-    blurb: 'Step-by-step strategies to grow online sales and social reach.'
+    blurb: 'Build better habits with practical, science-backed methods.'
   },
   {
     id: 'ebk-2',
-    title: 'Canva Design Mastery',
-    author: 'R. Verma',
-    price: 249,
+    title: 'The Psychology of Money',
+    author: 'Morgan Housel',
+    price: 349,
     cover: 'https://images.unsplash.com/photo-1481627834876-b7833e8f5570?auto=format&fit=crop&w=500&q=80',
-    blurb: 'Create high-converting creatives for ads, reels, and stories.'
+    blurb: 'Timeless lessons on wealth, greed, and financial behavior.'
   },
   {
     id: 'ebk-3',
-    title: 'Instagram Growth Secrets',
-    author: 'P. Gupta',
-    price: 349,
+    title: 'Rich Dad Poor Dad',
+    author: 'Robert T. Kiyosaki',
+    price: 299,
     cover: 'https://images.unsplash.com/photo-1495446815901-a7297e633e8d?auto=format&fit=crop&w=500&q=80',
-    blurb: 'Organic + paid growth framework for creators and businesses.'
+    blurb: 'A bestselling mindset shift for money, assets, and investing.'
   },
   {
     id: 'ebk-4',
-    title: 'Freelancer Income System',
-    author: 'N. Singh',
-    price: 399,
+    title: 'The 7 Habits of Highly Effective People',
+    author: 'Stephen R. Covey',
+    price: 449,
     cover: 'https://images.unsplash.com/photo-1507842217343-583bb7270b66?auto=format&fit=crop&w=500&q=80',
-    blurb: 'Get clients, price your services, and build recurring income.'
+    blurb: 'Powerful principles for personal and professional effectiveness.'
+  },
+  {
+    id: 'ebk-5',
+    title: 'Ikigai',
+    author: 'Hector Garcia & Francesc Miralles',
+    price: 299,
+    cover: 'https://images.unsplash.com/photo-1455885666463-9ad48653f7ce?auto=format&fit=crop&w=500&q=80',
+    blurb: 'Japanese wisdom for a meaningful, balanced, and joyful life.'
+  },
+  {
+    id: 'ebk-6',
+    title: 'Think and Grow Rich',
+    author: 'Napoleon Hill',
+    price: 279,
+    cover: 'https://images.unsplash.com/photo-1516979187457-637abb4f9353?auto=format&fit=crop&w=500&q=80',
+    blurb: 'Classic success philosophy used by entrepreneurs worldwide.'
+  },
+  {
+    id: 'ebk-7',
+    title: 'Deep Work',
+    author: 'Cal Newport',
+    price: 359,
+    cover: 'https://images.unsplash.com/photo-1497633762265-9d179a990aa6?auto=format&fit=crop&w=500&q=80',
+    blurb: 'Master focus and produce high-value work in less time.'
+  },
+  {
+    id: 'ebk-8',
+    title: 'The Almanack of Naval Ravikant',
+    author: 'Eric Jorgenson',
+    price: 399,
+    cover: 'https://images.unsplash.com/photo-1509266272358-7701da638078?auto=format&fit=crop&w=500&q=80',
+    blurb: 'Wisdom on wealth, happiness, leverage, and long-term thinking.'
   }
 ];
 
@@ -91,10 +123,10 @@ export default function MaintenanceEbook() {
         }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '.6rem', fontWeight: 800 }}>
             <BookOpen size={20} />
-            Ebook Store is Live
+            Premium Ebook Collection
           </div>
           <p style={{ margin: '.35rem 0 0', color: '#d6deea', fontSize: '.92rem' }}>
-            Our main website is under maintenance. You can continue buying premium ebooks here.
+            Bestselling books in productivity, finance, mindset, and growth.
           </p>
         </div>
 
