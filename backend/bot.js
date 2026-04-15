@@ -76,21 +76,35 @@ async function sendVipQrFlow(chatId, userId) {
 
     const qrCaption = pay.qrCaption && String(pay.qrCaption).trim()
         ? String(pay.qrCaption).trim()
-        : `💎 <b>VIP Access Payment</b>\n\n` +
-          `💰 VIP Access - <b>${VIP_SUBSCRIPTION_AMOUNT}/-</b>\n\n` +
-          `1) Scan this QR and complete payment.\n` +
-          `2) Send your payment screenshot in this chat.\n` +
-          `3) Our team will verify and share VIP access.\n\n` +
-          `<i>Send screenshot only after payment is completed.</i>`;
+        : `✨ <b>Welcome to Premium VIP Access</b> ✨\n\n` +
+          `┏━━━━━━━━━━━━━━━┓\n` +
+          `💎 <b>Plan:</b> VIP Membership\n` +
+          `💰 <b>Amount:</b> ₹${VIP_SUBSCRIPTION_AMOUNT}/-\n` +
+          `┗━━━━━━━━━━━━━━━┛\n\n` +
+          `📌 <b>How to activate:</b>\n` +
+          `1️⃣ Scan this QR & complete payment\n` +
+          `2️⃣ Tap <b>Send Payment Screenshot</b>\n` +
+          `3️⃣ Share screenshot + UTR for quick verification\n\n` +
+          `⚡ <i>Once verified, your VIP access is shared here ASAP.</i>`;
 
     await callTelegramAPI('sendPhoto', {
         chat_id: chatId,
         photo: pay.qrFileId,
         caption: qrCaption,
-        parse_mode: 'HTML'
+        parse_mode: 'HTML',
+        reply_markup: {
+            inline_keyboard: [[{ text: '📤 Send Payment Screenshot', callback_data: 'send_payment_proof' }]]
+        }
     });
     pendingPaymentProofUsers.set(String(userId), Date.now());
-    await sendMessage(chatId, `💰 VIP Access - <b>${VIP_SUBSCRIPTION_AMOUNT}/-</b>\n\n📤 Now send your <b>payment screenshot</b> here.\n\nAlso include your UTR/reference in text if visible.`);
+}
+
+async function sendVipPaymentOption(chatId) {
+    await sendMessage(chatId,
+        `💳 <b>VIP Payment</b>\n\n` +
+        `Tap the button below to view the QR and payment instructions.`,
+        { inline_keyboard: [[{ text: '💳 Pay via QR', callback_data: 'vip_qr' }]] }
+    );
 }
 
 function addToWelcomeStore(chatId, messageId, type) {
@@ -394,7 +408,7 @@ async function handleCommand(message) {
         if (text === '/start' || text.startsWith('/start ')) {
             const startParam = text.includes(' ') ? text.split(' ').slice(1).join(' ').trim().toLowerCase() : '';
             if (startParam === 'vip' || startParam === 'pay' || startParam === 'getvip') {
-                await sendVipQrFlow(chatId, userId);
+                await sendVipPaymentOption(chatId);
                 return;
             }
 
@@ -432,10 +446,10 @@ async function handleCommand(message) {
                     `⏳ Days left: <b>${daysLeft}</b>\n\n` +
                     `Tap below to renew before it expires! 💳`
                 );
-                await sendVipQrFlow(chatId, userId);
+                await sendVipPaymentOption(chatId);
             } else {
                 await sendMessage(chatId, '❌ No active subscription found.\n\nYou can purchase VIP access below.');
-                await sendVipQrFlow(chatId, userId);
+                await sendVipPaymentOption(chatId);
             }
         } else if (text === '/status') {
             const { data: sub } = await supabase.from('prachi_subscriptions')
@@ -861,7 +875,7 @@ async function handleCallbackQuery(callbackQuery) {
                 `📅 Expires: ${expires.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}\n` +
                 `⏳ Days left: <b>${daysLeft}</b>\n\nTap below to renew! 💳`
             );
-            await sendVipQrFlow(chatId, userId);
+            await sendVipPaymentOption(chatId);
         } else {
             await sendMessage(chatId, '❌ No active subscription found.',
                 { inline_keyboard: [[{ text: '💳 Get Access', callback_data: 'vip_qr' }]] }
@@ -869,6 +883,11 @@ async function handleCallbackQuery(callbackQuery) {
         }
     } else if (data === 'vip_qr') {
         await sendVipQrFlow(chatId, userId);
+    } else if (data === 'send_payment_proof') {
+        await sendMessage(chatId,
+            `📤 Please send your <b>payment screenshot</b> in this chat.\n\n` +
+            `Also include your UTR/reference in text if visible.`
+        );
     } else if (data === 'admin_stats' && isAdmin(userId)) {
         // Trigger the same logic as /stats
         const { data: subs } = await supabase.from('prachi_subscriptions').select('*');
