@@ -72,6 +72,10 @@ app.get('/api/public/data', async (req, res) => {
 // 2. IMB — Create a payment order
 const BACKEND_URL = process.env.BACKEND_URL || `http://localhost:${PORT}`;
 const FFMPEG_PATH = process.env.FFMPEG_PATH || 'ffmpeg';
+function getVipEntryUrl(fallbackUrl = FRONTEND_URL) {
+    const envBotUsername = (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '').trim();
+    return envBotUsername ? `https://t.me/${envBotUsername}?start=vip` : fallbackUrl;
+}
 
 function createBlurredTeaserVideo(inputPath, outputPath) {
     return new Promise((resolve, reject) => {
@@ -390,6 +394,7 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
     if (dest !== 'none' && process.env.TELEGRAM_BOT_TOKEN) {
         const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
         const backendUrl = process.env.BACKEND_URL || frontendUrl;
+        const vipEntryUrl = getVipEntryUrl(frontendUrl);
         const isImage = (type || 'image') === 'image';
         const mediaUrl = url ? `${backendUrl}${url}` : '';
         const contentType = isImage ? '📸 New Photo' : '🎬 New Video';
@@ -437,7 +442,7 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                             `${safeCaption || `${contentType} just dropped in the VIP Channel!`}\n\n` +
                             `🔒 <b>Exclusive to VIP members only.</b>\n\n` +
                             `👇 Tap below to get access!`;
-                        const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
+                        const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]] };
 
                         if (isImage && url) {
                             const filename = url.replace('/uploads/', '');
@@ -478,7 +483,7 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                 } else if (dest === 'public') {
                     // --- Post actual content to public channel (no blur) ---
                     const publicCaption = safeCaption || `${contentType} just posted! 🎉`;
-                    const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
+                    const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]] };
 
                     if (isImage && mediaUrl) {
                         try {
@@ -626,8 +631,9 @@ app.post('/api/admin/post-to-public', verifyToken, async (req, res) => {
 
     try {
         const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+        const vipEntryUrl = getVipEntryUrl(frontendUrl);
         await telegram.postToPublicChannel(message, {
-            inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]]
+            inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]]
         });
         res.json({ success: true });
     } catch (e) {
@@ -680,7 +686,8 @@ cron.schedule('0 * * * *', async () => {
     };
 
     const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
-    const renewKeyboard = { inline_keyboard: [[{ text: '💳 Renew Subscription Now', url: frontendUrl }]] };
+    const vipEntryUrl = getVipEntryUrl(frontendUrl);
+    const renewKeyboard = { inline_keyboard: [[{ text: '💳 Renew Subscription Now', url: vipEntryUrl }]] };
 
     // 2. Send 3-Day Reminders (72 hours)
     await notifySubs(72, "🔔 <b>Subscription Reminder</b>\n\nYour VIP access expires in exactly <b>3 Days</b>!\n\nPlease renew on the website soon to avoid losing access.", renewKeyboard);
@@ -722,6 +729,7 @@ cron.schedule('0 * * * *', async () => {
 cron.schedule('0 12 * * *', async () => {
     if (!process.env.TELEGRAM_BOT_TOKEN) return;
     const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+    const vipEntryUrl = getVipEntryUrl(frontendUrl);
     const end = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString();
     const start = new Date(Date.now() - 3 * 24 * 60 * 60 * 1000 - 60 * 60 * 1000).toISOString();
     const { data: expired } = await supabase.from('prachi_subscriptions')
@@ -733,7 +741,7 @@ cron.schedule('0 12 * * *', async () => {
             try {
                 await telegram.sendMessage(sub.telegram_user_id,
                     `💔 Hey! We miss you!\n\nYour VIP access expired 3 days ago. Come back and enjoy exclusive content again! 😘\n\n✨ Tap below to rejoin:`,
-                    { inline_keyboard: [[{ text: '💳 Come Back!', url: frontendUrl }]] }
+                    { inline_keyboard: [[{ text: '💳 Come Back!', url: vipEntryUrl }]] }
                 );
             } catch (_) {}
         }
@@ -815,6 +823,7 @@ cron.schedule('0 10 * * 1', async () => {
         ]);
 
         const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+        const vipEntryUrl = getVipEntryUrl(frontendUrl);
         const msg =
             `🔥 <b>VIP Community Update</b>\n\n` +
             `<b>${newThisWeek || 0} new members</b> joined the exclusive VIP channel this week!\n\n` +
@@ -822,7 +831,7 @@ cron.schedule('0 10 * * 1', async () => {
             `Don't miss out — join the fastest growing exclusive community! 👇`;
 
         await telegram.postToPublicChannel(msg, {
-            inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]]
+            inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]]
         });
         console.log('[CRON] Weekly subscriber count posted to public channel');
     } catch (e) {
@@ -870,11 +879,12 @@ app.post('/api/admin/post-countdown', verifyToken, async (req, res) => {
     const { hours, message } = req.body;
     if (!hours) return res.status(400).json({ error: 'Hours required' });
     const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+    const vipEntryUrl = getVipEntryUrl(frontendUrl);
     const msg =
         `⏰ <b>Something drops in ${hours} hour${hours > 1 ? 's' : ''}!</b>\n\n` +
         `${message || '👀 Stay tuned for something exclusive...'}\n\n` +
         `<i>VIP members only! 🔒</i>`;
-    const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
+    const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]] };
     try {
         const channelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
         const result = await telegram.postToPublicChannel(msg, keyboard);
@@ -970,6 +980,7 @@ app.delete('/api/admin/scheduled-posts/:id', verifyToken, (req, res) => {
 cron.schedule('* * * * *', async () => {
     const now = new Date();
     const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+    const vipEntryUrl = getVipEntryUrl(frontendUrl);
 
     for (const post of scheduledPosts) {
         if (post.sent) continue;
@@ -983,7 +994,7 @@ cron.schedule('* * * * *', async () => {
                     `⏰ <b>Something drops in ${post.countdownHours} hour${post.countdownHours > 1 ? 's' : ''}!</b>\n\n` +
                     `${post.countdownMessage || '👀 Stay tuned for something exclusive...'}\n\n` +
                     `<i>VIP members only! 🔒</i>`;
-                const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
+                const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]] };
                 try {
                     const result = await telegram.postToPublicChannel(cdMsg, keyboard);
                     if (result.ok && result.result && process.env.TELEGRAM_PUBLIC_CHANNEL_ID) {
@@ -1018,7 +1029,7 @@ cron.schedule('* * * * *', async () => {
                         }
                     }
                 } else {
-                    const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: frontendUrl }]] };
+                    const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]] };
                     if (post.photoUrl) {
                         await telegram.sendTeaserPhoto(`${backendUrl}${post.photoUrl}`, post.message || '', keyboard);
                     } else {

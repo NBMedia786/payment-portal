@@ -1,6 +1,8 @@
 const supabase = require('./database');
 const { callTelegramAPI, kickUser, sendMessage, deleteMessage } = require('./telegram');
 require('dotenv').config();
+const fs = require('fs');
+const path = require('path');
 
 const BOT_TOKEN = process.env.TELEGRAM_BOT_TOKEN;
 const CHANNEL_ID = process.env.TELEGRAM_CHANNEL_ID;
@@ -21,21 +23,72 @@ let cachedBotUsername = process.env.TELEGRAM_BOT_USERNAME || '';
 // Tracks welcome message IDs so they can be deleted when a user leaves
 // key: `${userId}_${chatId}`, value: messageId
 const welcomeMessageIds = new Map();
+const pendingPaymentProofUsers = new Map(); // userId -> timestamp
+const awaitingQrUploadAdmins = new Set(); // admin userIds
 
 // Persistent store for welcome messages so we can fix their button URLs on restart
-const WELCOME_STORE_PATH = require('path').join(__dirname, 'welcome_msgs.json');
+const WELCOME_STORE_PATH = path.join(__dirname, 'welcome_msgs.json');
+const PAYMENT_STORE_PATH = path.join(__dirname, 'payment_settings.json');
 
 function loadWelcomeStore() {
     try {
-        if (require('fs').existsSync(WELCOME_STORE_PATH)) {
-            return JSON.parse(require('fs').readFileSync(WELCOME_STORE_PATH, 'utf8'));
+        if (fs.existsSync(WELCOME_STORE_PATH)) {
+            return JSON.parse(fs.readFileSync(WELCOME_STORE_PATH, 'utf8'));
         }
     } catch (_) {}
     return [];
 }
 
 function saveWelcomeStore(entries) {
-    try { require('fs').writeFileSync(WELCOME_STORE_PATH, JSON.stringify(entries)); } catch (_) {}
+    try { fs.writeFileSync(WELCOME_STORE_PATH, JSON.stringify(entries)); } catch (_) {}
+}
+
+function loadPaymentStore() {
+    try {
+        if (fs.existsSync(PAYMENT_STORE_PATH)) {
+            return JSON.parse(fs.readFileSync(PAYMENT_STORE_PATH, 'utf8'));
+        }
+    } catch (_) {}
+    return { qrFileId: '', qrCaption: '' };
+}
+
+function savePaymentStore(data) {
+    try { fs.writeFileSync(PAYMENT_STORE_PATH, JSON.stringify(data || {}, null, 2)); } catch (_) {}
+}
+
+function getVipEntryUrl(fallbackUrl = null) {
+    const frontendUrl = fallbackUrl || process.env.FRONTEND_URL || 'https://yourwebsite.com';
+    const envBotUsername = (process.env.TELEGRAM_BOT_USERNAME || '').replace(/^@/, '').trim();
+    const botUsername = (cachedBotUsername || envBotUsername || '').replace(/^@/, '').trim();
+    return botUsername ? `https://t.me/${botUsername}?start=vip` : frontendUrl;
+}
+
+async function sendVipQrFlow(chatId, userId) {
+    const pay = loadPaymentStore();
+    if (!pay.qrFileId) {
+        await sendMessage(chatId,
+            `💳 VIP payment is currently being configured.\n\nPlease contact support and we will share payment details manually.`,
+            { inline_keyboard: [[{ text: '🙋 Contact Support', callback_data: 'contact_support' }]] }
+        );
+        return;
+    }
+
+    const qrCaption = pay.qrCaption && String(pay.qrCaption).trim()
+        ? String(pay.qrCaption).trim()
+        : `💎 <b>VIP Access Payment</b>\n\n` +
+          `1) Scan this QR and complete payment.\n` +
+          `2) Send your payment screenshot in this chat.\n` +
+          `3) Our team will verify and share VIP access.\n\n` +
+          `<i>Send screenshot only after payment is completed.</i>`;
+
+    await callTelegramAPI('sendPhoto', {
+        chat_id: chatId,
+        photo: pay.qrFileId,
+        caption: qrCaption,
+        parse_mode: 'HTML'
+    });
+    pendingPaymentProofUsers.set(String(userId), Date.now());
+    await sendMessage(chatId, `📤 Now send your <b>payment screenshot</b> here.\n\nAlso include your UTR/reference in text if visible.`);
 }
 
 function addToWelcomeStore(chatId, messageId, type) {
@@ -99,6 +152,7 @@ async function handleNewChatMember(update) {
     if (!userId) return;
 
     const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+    const vipJoinUrl = getVipEntryUrl(frontendUrl);
     const userMention = username ? `@${username}` : `<a href="tg://user?id=${userId}">${firstName || 'New member'}</a>`;
 
     // --- PUBLIC CHANNEL: send welcome with website link ---
@@ -116,7 +170,7 @@ async function handleNewChatMember(update) {
                 {
                     inline_keyboard: [
                         [{ text: '🔔 Start Bot — Get Notified', url: botStartUrl }],
-                        [{ text: '🔓 Get VIP Access', url: frontendUrl }]
+                        [{ text: '🔓 Get VIP Access', url: vipJoinUrl }]
                     ]
                 }
             );
@@ -160,7 +214,7 @@ async function handleNewChatMember(update) {
                 await kickUser(userId);
                 await sendMessage(userId,
                     '🚫 You do not have an active subscription.\n\nPlease purchase a subscription first to access the private channel.',
-                    { inline_keyboard: [[{ text: '💳 Get Access', url: frontendUrl }]] }
+                    { inline_keyboard: [[{ text: '💳 Get Access', url: vipJoinUrl }]] }
                 );
             } catch (e) {
                 console.error(`[BOT] Kick failed for ${userId}:`, e.message);
@@ -207,6 +261,23 @@ async function handleSupportTicket(message) {
     const userId = message.from.id;
 
     if (isAdmin(userId)) {
+        if (awaitingQrUploadAdmins.has(String(userId))) {
+            const qrPhoto = message.photo && message.photo.length > 0 ? message.photo[message.photo.length - 1] : null;
+            const isImageDoc = message.document && String(message.document.mime_type || '').startsWith('image/');
+            if (qrPhoto || isImageDoc) {
+                const fileId = qrPhoto ? qrPhoto.file_id : message.document.file_id;
+                const store = loadPaymentStore();
+                store.qrFileId = fileId;
+                if (message.caption && message.caption.trim()) {
+                    store.qrCaption = message.caption.trim();
+                }
+                savePaymentStore(store);
+                awaitingQrUploadAdmins.delete(String(userId));
+                await sendMessage(userId, `✅ QR updated successfully.\n\nUsers clicking "Join VIP" will now receive this QR automatically.`);
+                return;
+            }
+        }
+
         // Fix old welcome message: admin forwards a channel welcome message to the bot
         const fwdOrigin = message.forward_origin; // new Telegram API
         const fwdChat = (fwdOrigin && fwdOrigin.chat) || message.forward_from_chat;
@@ -221,12 +292,13 @@ async function handleSupportTicket(message) {
                 const botUrl = cachedBotUsername
                     ? `https://t.me/${cachedBotUsername}?start=${isVip ? 'vip' : 'public'}`
                     : frontendUrl;
+                const vipJoinUrl = getVipEntryUrl(frontendUrl);
 
                 const markup = isVip
                     ? { inline_keyboard: [[{ text: '🔔 Start Bot — Activate Perks', url: botUrl }]] }
                     : { inline_keyboard: [
                         [{ text: '🔔 Start Bot — Get Notified', url: botUrl }],
-                        [{ text: '🔓 Get VIP Access', url: frontendUrl }]
+                        [{ text: '🔓 Get VIP Access', url: vipJoinUrl }]
                       ]};
 
                 try {
@@ -263,6 +335,41 @@ async function handleSupportTicket(message) {
         return; 
     }
 
+    if (pendingPaymentProofUsers.has(String(userId))) {
+        const hasPhoto = message.photo && message.photo.length > 0;
+        const isImageDoc = message.document && String(message.document.mime_type || '').startsWith('image/');
+        if (!hasPhoto && !isImageDoc) {
+            await sendMessage(userId, `⚠️ Please send a <b>payment screenshot image</b> so we can verify your payment.`);
+            return;
+        }
+
+        const username = message.from.username ? `@${message.from.username}` : '(no username)';
+        const firstName = message.from.first_name || '';
+        const lastName = message.from.last_name || '';
+        const fullName = `${firstName} ${lastName}`.trim() || 'N/A';
+
+        for (const adminId of ADMIN_IDS) {
+            try {
+                await sendMessage(adminId,
+                    `💳 <b>VIP Payment Screenshot Received</b>\n\n` +
+                    `👤 Name: ${fullName}\n` +
+                    `🔖 Username: ${username}\n` +
+                    `🆔 User ID: <code>${userId}</code>\n\n` +
+                    `<i>Screenshot forwarded below.</i>`
+                );
+                await callTelegramAPI('copyMessage', {
+                    chat_id: adminId,
+                    from_chat_id: message.chat.id,
+                    message_id: message.message_id
+                });
+            } catch (_) {}
+        }
+
+        pendingPaymentProofUsers.delete(String(userId));
+        await sendMessage(userId, `✅ Screenshot received! Our team will verify and share your VIP access soon.`);
+        return;
+    }
+
     // Normal user creates ticket
     for (const adminId of ADMIN_IDS) {
         try {
@@ -283,7 +390,12 @@ async function handleCommand(message) {
 
     if (!isAdmin(userId)) {
         if (text === '/start' || text.startsWith('/start ')) {
-            const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+            const startParam = text.includes(' ') ? text.split(' ').slice(1).join(' ').trim().toLowerCase() : '';
+            if (startParam === 'vip' || startParam === 'pay' || startParam === 'getvip') {
+                await sendVipQrFlow(chatId, userId);
+                return;
+            }
+
             await sendMessage(chatId,
                 `👋 <b>Welcome to the VIP Bot!</b>\n\n` +
                 `I'm here to help you with your exclusive subscription. Here's what I can do for you:\n\n` +
@@ -295,14 +407,13 @@ async function handleCommand(message) {
                 {
                     inline_keyboard: [
                         [{ text: '✅ Check My Subscription', callback_data: 'check_status' }],
-                        [{ text: '💳 Renew / Get Access', url: frontendUrl }],
+                        [{ text: '💳 Renew / Get Access', callback_data: 'vip_qr' }],
                         [{ text: '🔄 Renew Status & Link', callback_data: 'renew_status' }],
                         [{ text: '🙋 Contact Support', callback_data: 'contact_support' }]
                     ]
                 }
             );
         } else if (text === '/renew') {
-            const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
             const { data: sub } = await supabase.from('prachi_subscriptions')
                 .select('*')
                 .eq('telegram_user_id', String(userId))
@@ -317,14 +428,12 @@ async function handleCommand(message) {
                     `⏳ <b>Your Subscription</b>\n\n` +
                     `📅 Expires: ${expires.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}\n` +
                     `⏳ Days left: <b>${daysLeft}</b>\n\n` +
-                    `Tap below to renew before it expires! 💳`,
-                    { inline_keyboard: [[{ text: '💳 Renew Now', url: frontendUrl }]] }
+                    `Tap below to renew before it expires! 💳`
                 );
+                await sendVipQrFlow(chatId, userId);
             } else {
-                await sendMessage(chatId,
-                    '❌ No active subscription found.\n\nGet access from the website below!',
-                    { inline_keyboard: [[{ text: '💳 Get Access', url: frontendUrl }]] }
-                );
+                await sendMessage(chatId, '❌ No active subscription found.\n\nYou can purchase VIP access below.');
+                await sendVipQrFlow(chatId, userId);
             }
         } else if (text === '/status') {
             const { data: sub } = await supabase.from('prachi_subscriptions')
@@ -369,6 +478,27 @@ async function handleCommand(message) {
                 ]
             }
         );
+        return;
+    }
+
+    if (text === '/setqr') {
+        awaitingQrUploadAdmins.add(String(userId));
+        await sendMessage(chatId, `📸 Send the payment QR image now.\n\nOptional: add caption text in the same photo message to set payment instructions.`);
+        return;
+    }
+
+    if (text === '/showqr') {
+        const pay = loadPaymentStore();
+        if (!pay.qrFileId) {
+            await sendMessage(chatId, '⚠️ QR not set yet. Use /setqr first.');
+            return;
+        }
+        await callTelegramAPI('sendPhoto', {
+            chat_id: chatId,
+            photo: pay.qrFileId,
+            caption: pay.qrCaption || 'Current VIP QR',
+            parse_mode: 'HTML'
+        });
         return;
     }
 
@@ -673,6 +803,8 @@ async function handleCommand(message) {
             `<b>⚙️ Management</b>\n` +
             `/extend &lt;username&gt; &lt;days&gt; — Add days to a sub\n` +
             `/kick &lt;username/phone/id&gt; — Kick &amp; cancel user\n` +
+            `/setqr — Upload/update VIP payment QR\n` +
+            `/showqr — Preview saved VIP QR\n` +
             `/menu — Show quick-action menu\n` +
             `/help — Show this message`
         );
@@ -706,14 +838,12 @@ async function handleCallbackQuery(callbackQuery) {
                 `⏳ Days left: <b>${daysLeft}</b>`
             );
         } else {
-            const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
             await sendMessage(chatId,
-                '❌ No active subscription found on this account.\n\nIf you believe this is an error, use the Contact Support button. Otherwise, grab your subscription from the website below!',
-                { inline_keyboard: [[{ text: '🛒 Open Website', url: frontendUrl }]] }
+                '❌ No active subscription found on this account.\n\nIf you believe this is an error, use Contact Support. Otherwise tap below to get VIP access.',
+                { inline_keyboard: [[{ text: '💳 Get VIP Access', callback_data: 'vip_qr' }]] }
             );
         }
     } else if (data === 'renew_status') {
-        const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
         const { data: sub } = await supabase.from('prachi_subscriptions')
             .select('*')
             .eq('telegram_user_id', String(userId))
@@ -727,14 +857,16 @@ async function handleCallbackQuery(callbackQuery) {
             await sendMessage(chatId,
                 `⏳ <b>Your Subscription</b>\n\n` +
                 `📅 Expires: ${expires.toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}\n` +
-                `⏳ Days left: <b>${daysLeft}</b>\n\nTap below to renew! 💳`,
-                { inline_keyboard: [[{ text: '💳 Renew Now', url: frontendUrl }]] }
+                `⏳ Days left: <b>${daysLeft}</b>\n\nTap below to renew! 💳`
             );
+            await sendVipQrFlow(chatId, userId);
         } else {
             await sendMessage(chatId, '❌ No active subscription found.',
-                { inline_keyboard: [[{ text: '💳 Get Access', url: frontendUrl }]] }
+                { inline_keyboard: [[{ text: '💳 Get Access', callback_data: 'vip_qr' }]] }
             );
         }
+    } else if (data === 'vip_qr') {
+        await sendVipQrFlow(chatId, userId);
     } else if (data === 'admin_stats' && isAdmin(userId)) {
         // Trigger the same logic as /stats
         const { data: subs } = await supabase.from('prachi_subscriptions').select('*');
@@ -824,6 +956,8 @@ async function handleCallbackQuery(callbackQuery) {
             `<b>⚙️ Management</b>\n` +
             `/extend &lt;user&gt; &lt;days&gt; — Add days to sub\n` +
             `/kick &lt;user&gt; — Kick &amp; cancel user\n` +
+            `/setqr — Upload/update VIP payment QR\n` +
+            `/showqr — Preview saved VIP QR\n` +
             `/menu — Quick-action menu`
         );
 
@@ -868,13 +1002,14 @@ async function pollUpdates() {
             if (stored.length > 0) {
                 console.log(`[BOT] Auto-fixing ${stored.length} stored welcome message(s)...`);
                 const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+                const vipJoinUrl = getVipEntryUrl(frontendUrl);
                 let fixed = 0;
                 for (const entry of stored) {
                     const botUrl = `https://t.me/${cachedBotUsername}?start=${entry.type || 'vip'}`;
                     const markup = entry.type === 'public'
                         ? { inline_keyboard: [
                             [{ text: '🔔 Start Bot — Get Notified', url: botUrl }],
-                            [{ text: '🔓 Get VIP Access', url: frontendUrl }]
+                            [{ text: '🔓 Get VIP Access', url: vipJoinUrl }]
                           ]}
                         : { inline_keyboard: [[{ text: '🔔 Start Bot — Activate Perks', url: botUrl }]] };
                     try {
@@ -903,6 +1038,8 @@ async function pollUpdates() {
                 { command: 'extend', description: '➕ Add days to a subscription' },
                 { command: 'kick', description: '👢 Kick & cancel a user' },
                 { command: 'expired', description: '🕐 List expired/cancelled subs' },
+                { command: 'setqr', description: '🖼️ Admin: set VIP payment QR image' },
+                { command: 'showqr', description: '🧾 Admin: preview current VIP QR' },
                 { command: 'help', description: '❓ Show all commands' },
             ]
         }).catch(() => {});
