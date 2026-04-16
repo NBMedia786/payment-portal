@@ -373,8 +373,11 @@ async function handleSupportTicket(message) {
                     `👤 Name: ${fullName}\n` +
                     `🔖 Username: ${username}\n` +
                     `🆔 User ID: <code>${userId}</code>\n\n` +
-                    `<i>👉 Swipe right on THIS text message to reply to the user.</i>\n` +
-                    `<i>(Screenshot forwarded below)</i>`
+                    `Tap <b>Approve</b> to activate subscription &amp; send invite link automatically.`,
+                    { inline_keyboard: [
+                        [{ text: '✅ Approve — Activate & Send Link', callback_data: `approve_payment_${userId}_${message.from.username || ''}` }],
+                        [{ text: '❌ Reject', callback_data: `reject_payment_${userId}` }]
+                    ]}
                 );
                 await callTelegramAPI('copyMessage', {
                     chat_id: adminId,
@@ -386,7 +389,7 @@ async function handleSupportTicket(message) {
 
         pendingPaymentProofUsers.delete(String(userId));
         const userMention = message.from.username ? `@${message.from.username}` : (message.from.first_name || 'there');
-        await sendMessage(userId, `Thank you for subscribing to my VIP channel ${userMention}, we will be adding u to the VIP channel shortly.`);
+        await sendMessage(userId, `Thank you ${userMention}! We received your payment screenshot and will verify it shortly. You'll get the VIP invite link here once approved! 🎉`);
         return;
     }
 
@@ -986,6 +989,57 @@ async function handleCallbackQuery(callbackQuery) {
             `/showqr — Preview saved VIP QR\n` +
             `/menu — Quick-action menu`
         );
+
+    } else if (data.startsWith('approve_payment_') && isAdmin(userId)) {
+        const parts = data.split('_'); // approve_payment_{userId}_{username}
+        const targetUserId = parts[2];
+        const targetUsername = parts.slice(3).join('_') || '';
+
+        // Create active subscription in DB (30 days)
+        const expiresAt = new Date(Date.now() + 30 * 24 * 60 * 60 * 1000).toISOString();
+        const { error: insertErr } = await supabase.from('prachi_subscriptions').insert({
+            telegram_user_id: targetUserId,
+            telegram_username: targetUsername ? `@${targetUsername}` : '',
+            phone: '',
+            transaction_id: `MANUAL_${Date.now()}`,
+            amount: VIP_SUBSCRIPTION_AMOUNT,
+            plan: 'monthly',
+            status: 'active',
+            expires_at: expiresAt
+        });
+
+        if (insertErr) {
+            await sendMessage(chatId, `❌ DB error: ${insertErr.message}`);
+            return;
+        }
+
+        // Send invite link to user
+        const channelUrl = process.env.TELEGRAM_CHANNEL_URL || '';
+        if (channelUrl) {
+            try {
+                await sendMessage(targetUserId,
+                    `🎉 <b>Payment Approved! Welcome to VIP!</b>\n\n` +
+                    `Your subscription is now active for <b>30 days</b>.\n\n` +
+                    `Tap below to join the exclusive channel:`,
+                    { inline_keyboard: [[{ text: '🔓 Join VIP Channel', url: channelUrl }]] }
+                );
+            } catch (e) {
+                await sendMessage(chatId, `⚠️ Approved in DB but couldn't DM user (they may not have started the bot): ${e.message}`);
+                return;
+            }
+        }
+
+        await sendMessage(chatId, `✅ Approved! Subscription created & invite sent to User ${targetUserId} (${targetUsername || 'no username'}).`);
+
+    } else if (data.startsWith('reject_payment_') && isAdmin(userId)) {
+        const targetUserId = data.split('_')[2];
+        try {
+            await sendMessage(targetUserId,
+                `❌ <b>Payment Not Verified</b>\n\nWe could not verify your payment. Please contact support if you believe this is a mistake.`,
+                { inline_keyboard: [[{ text: '🙋 Contact Support', callback_data: 'contact_support' }]] }
+            );
+        } catch (_) {}
+        await sendMessage(chatId, `❌ Rejected. User ${targetUserId} has been notified.`);
 
     } else if (data === 'contact_support') {
         await sendMessage(chatId, '📩 Please type your question or request below. An admin will reply to you as soon as possible!');
