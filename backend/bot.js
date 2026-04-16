@@ -479,18 +479,14 @@ async function handleCommand(message) {
 
             const firstName = message.from.first_name || 'there';
             await sendMessage(chatId,
-                `👋 <b>Hey ${firstName}! Welcome to Prachi's VIP Bot</b> 💋\n\n` +
-                `Here's what I can help you with:\n\n` +
-                `✅ Check if your subscription is active\n` +
-                `📅 See your expiry date & days remaining\n` +
-                `💳 Get or renew your VIP access\n` +
-                `🔓 Join the private VIP channel\n` +
-                `🙋 Contact support\n\n` +
-                `👇 <b>What would you like to do?</b>`,
+                `👋 <b>Hey ${firstName}! Welcome to Prachi's VIP Bot</b> 💋🔥\n\n` +
+                `I'm your personal assistant for everything VIP.\n` +
+                `Choose an option below 👇`,
                 {
                     inline_keyboard: [
+                        [{ text: '💎 Buy VIP Subscription', callback_data: 'vip_qr' }],
                         [{ text: '✅ Check My Subscription', callback_data: 'check_status' }],
-                        [{ text: '💳 Get / Renew VIP Access', callback_data: 'vip_qr' }],
+                        [{ text: '🔄 Renew Subscription', callback_data: 'renew_status' }],
                         [{ text: '🔓 Join VIP Channel', callback_data: 'renew_status' }],
                         [{ text: '🙋 Contact Support', callback_data: 'contact_support' }]
                     ]
