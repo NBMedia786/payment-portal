@@ -154,9 +154,8 @@ async function sendVipPaymentOption(chatId) {
 
 function addToWelcomeStore(chatId, messageId, type) {
     const entries = loadWelcomeStore();
-    // Avoid duplicates
     if (!entries.find(e => e.chatId == chatId && e.messageId == messageId)) {
-        entries.push({ chatId, messageId, type }); // type: 'vip' or 'public'
+        entries.push({ chatId, messageId, type, sentAt: Date.now() });
         saveWelcomeStore(entries);
     }
 }
@@ -164,6 +163,26 @@ function addToWelcomeStore(chatId, messageId, type) {
 function removeFromWelcomeStore(chatId, messageId) {
     const entries = loadWelcomeStore().filter(e => !(e.chatId == chatId && e.messageId == messageId));
     saveWelcomeStore(entries);
+}
+
+async function cleanupOldWelcomeMessages() {
+    const entries = loadWelcomeStore();
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000; // 24 hours ago
+    const toDelete = entries.filter(e => e.sentAt && e.sentAt < cutoff);
+    if (toDelete.length === 0) return;
+
+    let deleted = 0;
+    for (const e of toDelete) {
+        try {
+            await deleteMessage(e.chatId, e.messageId);
+            deleted++;
+        } catch (_) {}
+    }
+
+    // Remove deleted entries from store
+    const remaining = entries.filter(e => !(e.sentAt && e.sentAt < cutoff));
+    saveWelcomeStore(remaining);
+    if (deleted > 0) console.log(`[BOT] Cleaned up ${deleted} welcome message(s) older than 24h`);
 }
 
 function isAdmin(userId) {
@@ -1400,6 +1419,11 @@ async function pollUpdates() {
             }).catch(() => {});
         }
         console.log('[BOT] Commands registered');
+
+        // Run welcome message cleanup every hour
+        cleanupOldWelcomeMessages();
+        setInterval(cleanupOldWelcomeMessages, 60 * 60 * 1000);
+        console.log('[BOT] Welcome message cleanup scheduled (every 1h)');
     } catch (e) {
         console.error('[BOT] Failed to connect:', e.message);
         return;
