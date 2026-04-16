@@ -477,19 +477,21 @@ async function handleCommand(message) {
                 return;
             }
 
+            const firstName = message.from.first_name || 'there';
             await sendMessage(chatId,
-                `👋 <b>Welcome to the VIP Bot!</b>\n\n` +
-                `I'm here to help you with your exclusive subscription. Here's what I can do for you:\n\n` +
+                `👋 <b>Hey ${firstName}! Welcome to Prachi's VIP Bot</b> 💋\n\n` +
+                `Here's what I can help you with:\n\n` +
                 `✅ Check if your subscription is active\n` +
-                `⏳ See your expiry date & days remaining\n` +
-                `💳 Help you renew your subscription\n` +
-                `🙋 Connect you with support\n\n` +
-                `Tap a button below to get started 👇`,
+                `📅 See your expiry date & days remaining\n` +
+                `💳 Get or renew your VIP access\n` +
+                `🔓 Join the private VIP channel\n` +
+                `🙋 Contact support\n\n` +
+                `👇 <b>What would you like to do?</b>`,
                 {
                     inline_keyboard: [
                         [{ text: '✅ Check My Subscription', callback_data: 'check_status' }],
-                        [{ text: '💳 Renew / Get Access', callback_data: 'vip_qr' }],
-                        [{ text: '🔄 Renew Status & Link', callback_data: 'renew_status' }],
+                        [{ text: '💳 Get / Renew VIP Access', callback_data: 'vip_qr' }],
+                        [{ text: '🔓 Join VIP Channel', callback_data: 'renew_status' }],
                         [{ text: '🙋 Contact Support', callback_data: 'contact_support' }]
                     ]
                 }
