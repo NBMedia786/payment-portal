@@ -386,6 +386,26 @@ export default function Admin() {
         setLoading(false);
     };
 
+    const handleDeleteSub = async (id) => {
+        if (!confirm('Permanently delete this user record? This cannot be undone. The user will also be kicked from the channel.')) return;
+        setLoading(true);
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/subscriptions/${id}`, {
+                method: 'DELETE',
+                headers: { 'Authorization': `Bearer ${token}` }
+            });
+            if (res.ok) {
+                showNotify('User deleted permanently');
+                fetchSubscriptions();
+            } else {
+                showNotify('Failed to delete user', 'error');
+            }
+        } catch {
+            showNotify('Network error while deleting', 'error');
+        }
+        setLoading(false);
+    };
+
     const handleLogin = async (e) => {
         e.preventDefault();
         setLoading(true);
@@ -766,6 +786,10 @@ export default function Admin() {
     const activeSubs = safeSubscriptions.filter(s => s.status === 'active' && new Date(s.expires_at) > new Date());
     const mrr = activeSubs.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
     const totalRevenue = safeSubscriptions.reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
+    // Net Revenue = excludes cancelled subscriptions (cancellations are treated as refunds)
+    const netRevenue = safeSubscriptions
+        .filter(s => s.status !== 'cancelled')
+        .reduce((sum, s) => sum + (Number(s.amount) || 0), 0);
 
     /* ===== DASHBOARD ===== */
     return (
@@ -964,10 +988,10 @@ export default function Admin() {
                             
                             <div style={{ background: 'linear-gradient(145deg, rgba(245,200,66,0.1) 0%, rgba(245,200,66,0.02) 100%)', border: '1px solid rgba(245,200,66,0.2)', padding: '1.5rem', borderRadius: '16px' }}>
                                 <div style={{ color: 'var(--gold)', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600 }}>
-                                    <DollarSign size={18} /> Total Revenue
+                                    <DollarSign size={18} /> Net Revenue
                                 </div>
-                                <h2 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#fff', margin: 0 }}>₹{totalRevenue.toLocaleString()}</h2>
-                                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Lifetime gross volume</p>
+                                <h2 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#fff', margin: 0 }}>₹{netRevenue.toLocaleString()}</h2>
+                                <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Excludes cancellations · Gross ₹{totalRevenue.toLocaleString()}</p>
                             </div>
 
                             <div style={{ background: 'linear-gradient(145deg, rgba(168,85,247,0.1) 0%, rgba(168,85,247,0.02) 100%)', border: '1px solid rgba(168,85,247,0.2)', padding: '1.5rem', borderRadius: '16px' }}>
@@ -1733,7 +1757,7 @@ export default function Admin() {
                                                                 {sub.expires_at ? new Date(sub.expires_at).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—'}
                                                             </td>
                                                             <td style={{ padding: '0.6rem' }}>
-                                                                <div style={{ display: 'flex', gap: '0.4rem' }}>
+                                                                <div style={{ display: 'flex', gap: '0.4rem', flexWrap: 'wrap' }}>
                                                                     {isActive ? (
                                                                         <button
                                                                             onClick={() => handleCancelSub(sub.id)}
@@ -1763,6 +1787,20 @@ export default function Admin() {
                                                                             }}
                                                                         >Reactivate</button>
                                                                     )}
+                                                                    <button
+                                                                        onClick={() => handleDeleteSub(sub.id)}
+                                                                        title="Permanently delete this user record"
+                                                                        style={{
+                                                                            padding: '0.3rem 0.6rem',
+                                                                            borderRadius: '6px',
+                                                                            border: '1px solid rgba(124,124,124,0.3)',
+                                                                            background: 'rgba(124,124,124,0.1)',
+                                                                            color: 'var(--text-muted)',
+                                                                            cursor: 'pointer',
+                                                                            fontSize: '0.72rem',
+                                                                            fontWeight: 600
+                                                                        }}
+                                                                    >🗑 Delete</button>
                                                                 </div>
                                                             </td>
                                                         </tr>

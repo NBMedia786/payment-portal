@@ -556,20 +556,25 @@ app.get('/api/admin/subscriptions', verifyToken, async (req, res) => {
     res.json(subs || []);
 });
 
-// Manually cancel a subscription + kick from channel
+// Manually cancel a subscription + kick from the correct channel (based on plan)
 app.put('/api/admin/subscriptions/:id/cancel', verifyToken, async (req, res) => {
     const { id } = req.params;
-    
+
     const { data: sub, error } = await supabase.from('prachi_subscriptions').select('*').eq('id', id).maybeSingle();
     if (error) return res.status(500).json({ error: error.message });
     if (!sub) return res.status(404).json({ error: 'Subscription not found' });
 
-    if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN && process.env.TELEGRAM_VIP_PLUS_CHANNEL_ID) {
+    if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN) {
         try {
-            await telegram.kickUser(sub.telegram_user_id);
+            // Kick from the channel matching their plan
+            if (sub.plan === 'vip' && process.env.TELEGRAM_VIP_CHANNEL_ID) {
+                await telegram.kickUserFromChannel(process.env.TELEGRAM_VIP_CHANNEL_ID, sub.telegram_user_id);
+            } else if (process.env.TELEGRAM_VIP_PLUS_CHANNEL_ID) {
+                await telegram.kickUser(sub.telegram_user_id);
+            }
             try {
                 await telegram.sendMessage(sub.telegram_user_id,
-                    '⚠️ Your subscription has expired. Please renew to continue accessing the private channel.'
+                    '⚠️ Your subscription has been cancelled. Please renew to continue accessing the private channel.'
                 );
             } catch (_) {}
         } catch (e) {
@@ -579,6 +584,32 @@ app.put('/api/admin/subscriptions/:id/cancel', verifyToken, async (req, res) => 
 
     const now = new Date().toISOString();
     const { error: err2 } = await supabase.from('prachi_subscriptions').update({ status: 'cancelled', cancelled_at: now, kicked_at: now }).eq('id', id);
+    if (err2) return res.status(500).json({ error: err2.message });
+    res.json({ success: true });
+});
+
+// Permanently delete a subscription record — also kicks from channel first
+app.delete('/api/admin/subscriptions/:id', verifyToken, async (req, res) => {
+    const { id } = req.params;
+
+    const { data: sub, error } = await supabase.from('prachi_subscriptions').select('*').eq('id', id).maybeSingle();
+    if (error) return res.status(500).json({ error: error.message });
+    if (!sub) return res.status(404).json({ error: 'Subscription not found' });
+
+    // Kick from correct channel first (if user is still a member)
+    if (sub.telegram_user_id && process.env.TELEGRAM_BOT_TOKEN) {
+        try {
+            if (sub.plan === 'vip' && process.env.TELEGRAM_VIP_CHANNEL_ID) {
+                await telegram.kickUserFromChannel(process.env.TELEGRAM_VIP_CHANNEL_ID, sub.telegram_user_id);
+            } else if (process.env.TELEGRAM_VIP_PLUS_CHANNEL_ID) {
+                await telegram.kickUser(sub.telegram_user_id);
+            }
+        } catch (e) {
+            console.error('Delete kick error:', e.message);
+        }
+    }
+
+    const { error: err2 } = await supabase.from('prachi_subscriptions').delete().eq('id', id);
     if (err2) return res.status(500).json({ error: err2.message });
     res.json({ success: true });
 });
