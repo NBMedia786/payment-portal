@@ -432,8 +432,7 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                         await telegram.postToVipChannel(vipPostCaption).catch((err) => console.error('[POST-VIPPLUS] Text post failed:', err.message));
                     }
 
-                    // --- Post photo to VIP channel (₹299 photos-only) ---
-                    // Videos skip this channel entirely (VIP is photos-only)
+                    // --- Post to VIP channel (₹299): photos full, videos as blurred teaser ---
                     if (process.env.TELEGRAM_VIP_CHANNEL_ID) {
                         if (isImage && mediaUrl) {
                             try {
@@ -448,8 +447,31 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                             } catch (e) {
                                 console.error('[POST-VIP299] Photo failed:', e.message);
                             }
-                        } else {
-                            console.log('[POST-VIP299] Skipping video — VIP channel is photos-only');
+                        } else if (!isImage && mediaUrl && url) {
+                            // Video → blurred video teaser (upgrade to VIP+ to watch)
+                            const filename = url.replace('/uploads/', '');
+                            const inputPath = path.join('uploads', filename);
+                            const teaserFilename = `tease-vip-${Date.now()}-${path.parse(filename).name}.mp4`;
+                            const teaserPath = path.join('uploads', teaserFilename);
+                            try {
+                                if (!fs.existsSync(inputPath)) throw new Error('Source video not found');
+                                await createBlurredTeaserVideo(inputPath, teaserPath);
+                                const teaserUrl = `${backendUrl}/uploads/${teaserFilename}`;
+                                const teaserCap = `🔒 <b>Video posted in VIP+!</b>\n\n<i>Upgrade to VIP+ (₹399) to unlock videos.</i>`;
+                                const upgradeKey = { inline_keyboard: [[{ text: '🔥 Upgrade to VIP+', url: vipEntryUrl }]] };
+                                const r = await telegram.callTelegramAPI('sendVideo', {
+                                    chat_id: process.env.TELEGRAM_VIP_CHANNEL_ID,
+                                    video: teaserUrl,
+                                    caption: teaserCap,
+                                    parse_mode: 'HTML',
+                                    reply_markup: upgradeKey
+                                });
+                                if (r && !r.ok) console.error('[POST-VIP299] Video teaser API error:', r.description);
+                                else console.log('[POST-VIP299] ✅ Blurred video teaser posted to VIP channel');
+                                fs.unlink(teaserPath, () => {});
+                            } catch (e) {
+                                console.error('[POST-VIP299] Video teaser failed:', e.message);
+                            }
                         }
                     } else {
                         console.warn('[POST-VIP299] TELEGRAM_VIP_CHANNEL_ID not set, skipping VIP ₹299 post');

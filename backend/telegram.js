@@ -268,8 +268,23 @@ async function smartDistributeVideo(videoFileId, thumbFileId, fullCaption, tease
         results.vipPlusErr = 'TELEGRAM_VIP_PLUS_CHANNEL_ID not set in .env';
     }
 
-    // VIP channel (₹299) — photos only; videos skip this channel entirely
-    results.vipSkipped = 'VIP channel is photos-only; videos skip this channel';
+    // VIP channel (₹299) — videos get a blurred thumbnail teaser (same as public)
+    if (VIP_ONLY_CHANNEL_ID) {
+        if (!thumbFileId) {
+            results.vipErr = 'No video thumbnail available for blur teaser';
+        } else {
+            try {
+                const markup = upgradeMarkup || null;
+                const d = { chat_id: VIP_ONLY_CHANNEL_ID, photo: thumbFileId, caption: teaserCaption, parse_mode: 'HTML', has_spoiler: true };
+                if (markup) d.reply_markup = markup;
+                const r = await callTelegramAPI('sendPhoto', d);
+                if (r && r.ok) results.vip = r;
+                else results.vipErr = (r && r.description) || 'unknown error';
+            } catch (e) { results.vipErr = e.message; }
+        }
+    } else {
+        results.vipErr = 'TELEGRAM_VIP_CHANNEL_ID not set in .env';
+    }
 
     // Blur photo teaser → public channel
     if (publicChannelId) {
@@ -305,12 +320,15 @@ async function smartDistributeAlbum(items, fullCaption, teaserCaption, upgradeMa
         return { type: 'photo', media: it.fileId, ...base };
     });
 
-    // Build media group for VIP — photos only, videos are skipped (VIP channel is photos-only)
-    const vipItemsOnly = items.filter(it => it.type === 'photo');
-    const vipMedia = vipItemsOnly.map((it, idx) => {
+    // Build media group for VIP — photos full, videos become blurred thumbnail photos (teaser)
+    const vipMedia = items.map((it, idx) => {
         const base = idx === 0 && fullCaption ? { caption: fullCaption, parse_mode: 'HTML' } : {};
+        if (it.type === 'video') {
+            if (!it.thumbFileId) return null;
+            return { type: 'photo', media: it.thumbFileId, has_spoiler: true, ...base };
+        }
         return { type: 'photo', media: it.fileId, ...base };
-    });
+    }).filter(Boolean);
 
     // Build media group for Public — all items blurred (spoiler)
     const publicMedia = items.map((it, idx) => {
@@ -333,16 +351,17 @@ async function smartDistributeAlbum(items, fullCaption, teaserCaption, upgradeMa
         results.vipPlusErr = 'TELEGRAM_VIP_PLUS_CHANNEL_ID not set';
     }
 
-    // Send to VIP (photos only — videos are skipped entirely)
+    // Send to VIP — photos full, videos as blurred thumbnail teasers
     if (VIP_ONLY_CHANNEL_ID) {
         if (vipMedia.length === 0) {
-            results.vipSkipped = 'Album has no photos (VIP channel is photos-only)';
+            results.vipErr = 'No items to send (videos had no thumbnails)';
         } else if (vipMedia.length === 1) {
             // Media groups require 2+ items; send single as regular photo
             try {
                 const m = vipMedia[0];
                 const d = { chat_id: VIP_ONLY_CHANNEL_ID, photo: m.media, parse_mode: 'HTML' };
                 if (m.caption) d.caption = m.caption;
+                if (m.has_spoiler) d.has_spoiler = true;
                 const r = await callTelegramAPI('sendPhoto', d);
                 if (r && r.ok) results.vip = r;
                 else results.vipErr = (r && r.description) || 'unknown error';

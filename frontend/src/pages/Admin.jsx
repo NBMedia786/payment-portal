@@ -1546,7 +1546,7 @@ export default function Admin() {
                                     {postDestination === 'vip' && (
                                         <p style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: '0.4rem', lineHeight: 1.5 }}>
                                             📸 <b>Photo:</b> Full to VIP (₹299) + VIP+ (₹399) · Blurred teaser to Public<br/>
-                                            🎬 <b>Video:</b> Full to VIP+ only · Blurred teaser to Public · VIP (₹299) skipped
+                                            🎬 <b>Video:</b> Full to VIP+ (₹399) · Blurred teaser to VIP (₹299) + Public
                                         </p>
                                     )}
                                     {postDestination === 'public' && (
@@ -1960,7 +1960,7 @@ export default function Admin() {
                                 <p><strong style={{ color: 'var(--text-primary)' }}>For media with smart routing</strong>, use the Telegram bot DM:</p>
                                 <ul style={{ marginTop: '0.6rem', paddingLeft: '1.2rem' }}>
                                     <li><strong style={{ color: '#EC4899' }}>📸 Photo</strong> → Full to VIP + VIP+, blurred to Public</li>
-                                    <li><strong style={{ color: '#F59E0B' }}>🎬 Video</strong> → Full to VIP+ only, blurred thumbnail to Public (VIP skipped — photos only)</li>
+                                    <li><strong style={{ color: '#F59E0B' }}>🎬 Video</strong> → Full to VIP+ only, blurred teaser to VIP (₹299) + Public</li>
                                     <li><strong style={{ color: 'var(--gold)' }}>🖼 Album / Carousel (up to 10)</strong> → Send multiple as one group, bot asks routing</li>
                                 </ul>
                                 <p style={{ marginTop: '0.8rem' }}>Just DM the bot with your photo/video/album and it will ask you how to distribute it.</p>
