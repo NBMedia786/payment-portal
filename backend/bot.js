@@ -1,5 +1,5 @@
 const supabase = require('./database');
-const { callTelegramAPI, kickUser, kickUserFromChannel, sendMessage: _sendMessageRaw, deleteMessage, smartDistributePhoto, smartDistributeVideo, createInviteLinkForChannel } = require('./telegram');
+const { callTelegramAPI, kickUser, kickUserFromChannel, sendMessage: _sendMessageRaw, deleteMessage, smartDistributePhoto, smartDistributeVideo, smartDistributeAlbum, createInviteLinkForChannel } = require('./telegram');
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -39,7 +39,8 @@ let cachedBotUsername = process.env.TELEGRAM_BOT_USERNAME || '';
 const welcomeMessageIds = new Map();
 const pendingPaymentProofUsers = new Map(); // userId -> timestamp
 const awaitingQrUploadAdmins = new Set(); // admin userIds
-const awaitingSmartPost = new Map(); // adminId -> { type: 'photo'|'video', fileId, thumbFileId }
+const awaitingSmartPost = new Map(); // adminId -> { type: 'photo'|'video'|'album', fileId, thumbFileId, items? }
+const albumBuffer = new Map(); // `${adminId}_${mediaGroupId}` -> { items: [], caption, timer }
 const VIP_AMOUNT = 299;       // photos only
 const VIP_PLUS_AMOUNT = 399;  // photos + videos
 const VIP_SUBSCRIPTION_AMOUNT = VIP_PLUS_AMOUNT; // backward compat
@@ -507,6 +508,48 @@ async function handleSupportTicket(message) {
         const hasPhoto = message.photo && message.photo.length > 0;
         const hasVideo = message.video;
         const isImageDoc = message.document && String(message.document.mime_type || '').startsWith('image/');
+        const mediaGroupId = message.media_group_id;
+
+        // ——— Album / carousel: buffer items until all arrive ———
+        if (mediaGroupId && (hasPhoto || hasVideo)) {
+            const key = `${userId}_${mediaGroupId}`;
+            let entry = albumBuffer.get(key);
+            if (!entry) {
+                entry = { items: [], caption: '', timer: null };
+                albumBuffer.set(key, entry);
+            }
+            if (hasPhoto) {
+                entry.items.push({ type: 'photo', fileId: message.photo[message.photo.length - 1].file_id });
+            } else if (hasVideo) {
+                entry.items.push({
+                    type: 'video',
+                    fileId: message.video.file_id,
+                    thumbFileId: message.video.thumbnail ? message.video.thumbnail.file_id : ''
+                });
+            }
+            if (message.caption) entry.caption = message.caption;
+
+            // Debounce: wait 1.5s after the last item to assume the album is complete
+            if (entry.timer) clearTimeout(entry.timer);
+            entry.timer = setTimeout(async () => {
+                albumBuffer.delete(key);
+                const photoCount = entry.items.filter(i => i.type === 'photo').length;
+                const videoCount = entry.items.filter(i => i.type === 'video').length;
+                awaitingSmartPost.set(String(userId), { type: 'album', items: entry.items, caption: entry.caption });
+                await sendMessage(userId,
+                    `🖼 <b>Album received — ${entry.items.length} items</b>\n\n` +
+                    `📸 Photos: ${photoCount}\n` +
+                    `🎬 Videos: ${videoCount}\n` +
+                    `<b>Caption:</b> ${entry.caption || '(none)'}\n\n` +
+                    `Distribute as a carousel? Photos go full to VIP+VIP+, videos full to VIP+ only. Public gets blurred thumbnails.`,
+                    { inline_keyboard: [
+                        [{ text: '🖼 Route as Album', callback_data: 'smart_route_album' }],
+                        [{ text: '🚫 Cancel', callback_data: 'smart_cancel' }]
+                    ]}
+                );
+            }, 1500);
+            return;
+        }
 
         if (awaitingSmartPost.has(String(userId))) {
             // Admin is confirming or cancelling — handled by callback_query, skip here
@@ -1763,6 +1806,26 @@ async function handleCallbackQuery(callbackQuery) {
             await sendMessage(chatId, `❌ Distribution failed: ${e.message}`);
         }
 
+    } else if (data === 'smart_route_album' && isAdmin(userId)) {
+        const pending = awaitingSmartPost.get(String(userId));
+        if (!pending || pending.type !== 'album') { await sendMessage(chatId, '⚠️ No album pending. Send multiple photos/videos first.'); return; }
+        awaitingSmartPost.delete(String(userId));
+        const frontendUrl = process.env.FRONTEND_URL || 'https://yourwebsite.com';
+        const vipJoinUrl = getVipEntryUrl(frontendUrl);
+        const teaserCaption = (pending.caption ? pending.caption + '\n\n' : '') + `🔒 <b>Exclusive album — join VIP to unlock!</b>`;
+        const upgradeMarkup = { inline_keyboard: [[{ text: '🔓 Get VIP Access', url: vipJoinUrl }]] };
+        try {
+            const r = await smartDistributeAlbum(pending.items, pending.caption || '', teaserCaption, upgradeMarkup);
+            let msg = `🖼 <b>Album Distribution Result</b>\n\n` +
+                `Items: ${pending.items.length} (📸 ${pending.items.filter(i=>i.type==='photo').length} · 🎬 ${pending.items.filter(i=>i.type==='video').length})\n\n`;
+            msg += r.vipPlus?.ok ? `✅ VIP+ (₹399): Posted\n` : `❌ VIP+ (₹399): ${r.vipPlusErr || 'failed'}\n`;
+            msg += r.vip?.ok     ? `✅ VIP (₹299):  Posted\n` : `❌ VIP (₹299):  ${r.vipErr || 'failed'}\n`;
+            msg += r.public?.ok  ? `✅ Public:      Posted (blur)\n` : `❌ Public:      ${r.publicErr || 'failed'}\n`;
+            await sendMessage(chatId, msg);
+        } catch (e) {
+            await sendMessage(chatId, `❌ Album distribution failed: ${e.message}`);
+        }
+
     } else if (data === 'smart_cancel' && isAdmin(userId)) {
         awaitingSmartPost.delete(String(userId));
         await sendMessage(chatId, '🚫 Cancelled.');
@@ -1770,16 +1833,18 @@ async function handleCallbackQuery(callbackQuery) {
     } else if (data === 'admin_smart_post' && isAdmin(userId)) {
         await sendMessage(chatId,
             `📤 <b>Smart Content Routing</b>\n\n` +
-            `Simply send a <b>photo</b> or <b>video</b> to this bot DM and I'll ask how to distribute it.\n\n` +
+            `Send a <b>photo</b>, <b>video</b>, or <b>album</b> (multiple items) to this bot DM and I'll ask how to distribute it.\n\n` +
             `📸 <b>Photo routing:</b>\n` +
-            `• Full quality → VIP channel (₹299)\n` +
-            `• Full quality → VIP+ channel (₹399)\n` +
-            `• Blurred teaser → Public channel\n\n` +
+            `• Full → VIP (₹299) + VIP+ (₹399)\n` +
+            `• Blurred teaser → Public\n\n` +
             `🎬 <b>Video routing:</b>\n` +
-            `• Full video → VIP+ channel (₹399)\n` +
-            `• Blurred thumbnail teaser → VIP channel (₹299)\n` +
-            `• Blurred thumbnail teaser → Public channel\n\n` +
-            `<i>Send your photo/video now 👇</i>`
+            `• Full → VIP+ (₹399) only\n` +
+            `• Blurred thumbnail → VIP (₹299) + Public\n\n` +
+            `🖼 <b>Album / Carousel (up to 10 items):</b>\n` +
+            `• Photos: full to both VIP channels\n` +
+            `• Videos: full to VIP+ only; blur thumbs to VIP+public\n` +
+            `• Public sees full album blurred\n\n` +
+            `<i>Send your content now 👇</i>`
         );
 
     } else if (data === 'admin_post_vip' && isAdmin(userId)) {

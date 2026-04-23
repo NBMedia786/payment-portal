@@ -161,7 +161,9 @@ export default function Admin() {
     const schedulePhotoRef = useRef(null);
     const [subscriptions, setSubscriptions] = useState([]);
     const [subStats, setSubStats] = useState({ total: 0, active: 0, cancelled: 0, expired: 0 });
-    const [channelStats, setChannelStats] = useState({ vip: null, public: null });
+    const [channelStats, setChannelStats] = useState({ vip: null, vipOnly: null, public: null });
+    const [channelPostMsg, setChannelPostMsg] = useState({ vip: '', vipplus: '', public: '' });
+    const [channelPostLoading, setChannelPostLoading] = useState({ vip: false, vipplus: false, public: false });
     const fileInputRef = useRef(null);
     const avatarInputRef = useRef(null);
     const coverInputRef = useRef(null);
@@ -384,6 +386,29 @@ export default function Admin() {
             showNotify('Failed to reactivate', 'error');
         }
         setLoading(false);
+    };
+
+    const handlePostToChannel = async (channelKey) => {
+        const msg = channelPostMsg[channelKey];
+        if (!msg || !msg.trim()) return showNotify('Message cannot be empty', 'error');
+        setChannelPostLoading(prev => ({ ...prev, [channelKey]: true }));
+        try {
+            const res = await fetch(`${API_BASE}/api/admin/post-to-channel`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ message: msg, channel: channelKey })
+            });
+            const data = await res.json();
+            if (data.success) {
+                showNotify(`✅ Posted to ${data.label}`);
+                setChannelPostMsg(prev => ({ ...prev, [channelKey]: '' }));
+            } else {
+                showNotify(data.error || 'Failed to post', 'error');
+            }
+        } catch {
+            showNotify('Network error.', 'error');
+        }
+        setChannelPostLoading(prev => ({ ...prev, [channelKey]: false }));
     };
 
     const handleDeleteSub = async (id) => {
@@ -777,6 +802,7 @@ export default function Admin() {
         { id: 'content', label: 'Page Content', icon: <Type size={17} /> },
         { id: 'pricing', label: 'Pricing & Timer', icon: <Tag size={17} /> },
         { id: 'gallery', label: 'Media Gallery', icon: <ImageIcon size={17} /> },
+        { id: 'channels', label: 'Channels', icon: <MessageSquare size={17} /> },
         { id: 'subscriptions', label: 'Subscriptions', icon: <Users size={17} /> },
         { id: 'telegram-tools', label: 'Telegram Tools', icon: <MessageSquare size={17} /> },
     ];
@@ -1002,13 +1028,23 @@ export default function Admin() {
                                 <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>{subStats.cancelled} cancelled historically</p>
                             </div>
 
+                            {channelStats.vipOnly !== null && (
+                                <div style={{ background: 'linear-gradient(145deg, rgba(236,72,153,0.1) 0%, rgba(236,72,153,0.02) 100%)', border: '1px solid rgba(236,72,153,0.2)', padding: '1.5rem', borderRadius: '16px' }}>
+                                    <div style={{ color: '#EC4899', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600 }}>
+                                        📸 VIP Members (₹299)
+                                    </div>
+                                    <h2 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#fff', margin: 0 }}>{channelStats.vipOnly.toLocaleString()}</h2>
+                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Photos-only channel members</p>
+                                </div>
+                            )}
+
                             {channelStats.vip !== null && (
                                 <div style={{ background: 'linear-gradient(145deg, rgba(229,165,75,0.1) 0%, rgba(229,165,75,0.02) 100%)', border: '1px solid rgba(229,165,75,0.2)', padding: '1.5rem', borderRadius: '16px' }}>
                                     <div style={{ color: '#E5A54B', display: 'flex', alignItems: 'center', gap: '0.5rem', marginBottom: '0.5rem', fontSize: '0.9rem', fontWeight: 600 }}>
-                                        <Users size={18} /> VIP Members
+                                        🔥 VIP+ Members (₹399)
                                     </div>
                                     <h2 style={{ fontSize: '2.5rem', fontWeight: 900, color: '#fff', margin: 0 }}>{channelStats.vip.toLocaleString()}</h2>
-                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Total in VIP channel (incl. non-paying)</p>
+                                    <p style={{ color: 'var(--text-muted)', fontSize: '0.8rem', marginTop: '0.5rem' }}>Photos + Videos channel members</p>
                                 </div>
                             )}
 
@@ -1824,6 +1860,109 @@ export default function Admin() {
                                 <p><strong style={{ color: 'var(--text-primary)' }}>Auto-expiry:</strong> Subscriptions auto-expire after 30 days. The system checks every hour and kicks expired users from the Telegram channel.</p>
                                 <p style={{ marginTop: '0.5rem' }}><strong style={{ color: 'var(--text-primary)' }}>Manual control:</strong> Use Cancel to immediately revoke access, or Reactivate to grant 30 more days.</p>
                                 <p style={{ marginTop: '0.5rem' }}><strong style={{ color: 'var(--text-primary)' }}>Renewal:</strong> Users must pay again each month to rejoin. They receive a notification when access is removed.</p>
+                            </div>
+                        </div>
+                    </>
+                )}
+
+                {/* ── Channels ── */}
+                {activeTab === 'channels' && (
+                    <>
+                        <div className="admin-page-header">
+                            <div>
+                                <h1 className="admin-page-title">Channels</h1>
+                                <p className="admin-page-subtitle">Manage and post to your VIP, VIP+, and Public channels</p>
+                            </div>
+                        </div>
+
+                        {/* Channel Overview */}
+                        <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(280px, 1fr))', gap: '1rem', marginBottom: '2rem' }}>
+                            {/* Public Channel Card */}
+                            <div style={{ background: 'linear-gradient(145deg, rgba(56,189,248,0.08) 0%, rgba(56,189,248,0.02) 100%)', border: '1px solid rgba(56,189,248,0.25)', padding: '1.5rem', borderRadius: '16px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                                    <div>
+                                        <div style={{ color: '#38BDF8', fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.3rem' }}>📣 PUBLIC CHANNEL</div>
+                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>Free · Teaser content</div>
+                                    </div>
+                                    <div style={{ fontSize: '2rem', fontWeight: 900, color: '#fff' }}>{channelStats.public !== null ? channelStats.public.toLocaleString() : '—'}</div>
+                                </div>
+                                <textarea
+                                    value={channelPostMsg.public}
+                                    onChange={(e) => setChannelPostMsg(prev => ({ ...prev, public: e.target.value }))}
+                                    placeholder="Write a message to post to Public channel... (HTML supported: <b>bold</b>, <i>italic</i>)"
+                                    rows={4}
+                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid rgba(56,189,248,0.2)', background: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: '0.85rem', marginBottom: '0.7rem', resize: 'vertical', fontFamily: 'inherit' }}
+                                />
+                                <button
+                                    onClick={() => handlePostToChannel('public')}
+                                    disabled={channelPostLoading.public}
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: 'none', background: '#38BDF8', color: '#000', fontWeight: 700, cursor: channelPostLoading.public ? 'not-allowed' : 'pointer', opacity: channelPostLoading.public ? 0.6 : 1 }}
+                                >{channelPostLoading.public ? 'Posting...' : '📣 Post to Public'}</button>
+                            </div>
+
+                            {/* VIP Channel Card (₹299) */}
+                            <div style={{ background: 'linear-gradient(145deg, rgba(236,72,153,0.08) 0%, rgba(236,72,153,0.02) 100%)', border: '1px solid rgba(236,72,153,0.25)', padding: '1.5rem', borderRadius: '16px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                                    <div>
+                                        <div style={{ color: '#EC4899', fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.3rem' }}>📸 VIP CHANNEL</div>
+                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>₹299/mo · Photos only</div>
+                                    </div>
+                                    <div style={{ fontSize: '2rem', fontWeight: 900, color: '#fff' }}>{channelStats.vipOnly !== null ? channelStats.vipOnly.toLocaleString() : '—'}</div>
+                                </div>
+                                <textarea
+                                    value={channelPostMsg.vip}
+                                    onChange={(e) => setChannelPostMsg(prev => ({ ...prev, vip: e.target.value }))}
+                                    placeholder="Write a message to post to VIP channel (₹299)..."
+                                    rows={4}
+                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid rgba(236,72,153,0.2)', background: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: '0.85rem', marginBottom: '0.7rem', resize: 'vertical', fontFamily: 'inherit' }}
+                                />
+                                <button
+                                    onClick={() => handlePostToChannel('vip')}
+                                    disabled={channelPostLoading.vip}
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: 'none', background: '#EC4899', color: '#fff', fontWeight: 700, cursor: channelPostLoading.vip ? 'not-allowed' : 'pointer', opacity: channelPostLoading.vip ? 0.6 : 1 }}
+                                >{channelPostLoading.vip ? 'Posting...' : '📸 Post to VIP'}</button>
+                            </div>
+
+                            {/* VIP+ Channel Card (₹399) */}
+                            <div style={{ background: 'linear-gradient(145deg, rgba(245,158,11,0.08) 0%, rgba(245,158,11,0.02) 100%)', border: '1px solid rgba(245,158,11,0.25)', padding: '1.5rem', borderRadius: '16px' }}>
+                                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1rem' }}>
+                                    <div>
+                                        <div style={{ color: '#F59E0B', fontSize: '0.85rem', fontWeight: 700, marginBottom: '0.3rem' }}>🔥 VIP+ CHANNEL</div>
+                                        <div style={{ color: 'var(--text-muted)', fontSize: '0.75rem' }}>₹399/mo · Photos + Videos</div>
+                                    </div>
+                                    <div style={{ fontSize: '2rem', fontWeight: 900, color: '#fff' }}>{channelStats.vip !== null ? channelStats.vip.toLocaleString() : '—'}</div>
+                                </div>
+                                <textarea
+                                    value={channelPostMsg.vipplus}
+                                    onChange={(e) => setChannelPostMsg(prev => ({ ...prev, vipplus: e.target.value }))}
+                                    placeholder="Write a message to post to VIP+ channel (₹399)..."
+                                    rows={4}
+                                    style={{ width: '100%', padding: '0.7rem', borderRadius: '8px', border: '1px solid rgba(245,158,11,0.2)', background: 'rgba(0,0,0,0.3)', color: '#fff', fontSize: '0.85rem', marginBottom: '0.7rem', resize: 'vertical', fontFamily: 'inherit' }}
+                                />
+                                <button
+                                    onClick={() => handlePostToChannel('vipplus')}
+                                    disabled={channelPostLoading.vipplus}
+                                    style={{ width: '100%', padding: '0.6rem', borderRadius: '8px', border: 'none', background: '#F59E0B', color: '#000', fontWeight: 700, cursor: channelPostLoading.vipplus ? 'not-allowed' : 'pointer', opacity: channelPostLoading.vipplus ? 0.6 : 1 }}
+                                >{channelPostLoading.vipplus ? 'Posting...' : '🔥 Post to VIP+'}</button>
+                            </div>
+                        </div>
+
+                        {/* Smart Routing Info */}
+                        <div className="admin-section-card" style={{ marginTop: '1rem' }}>
+                            <div className="admin-section-header">
+                                <div className="admin-section-title">
+                                    <MessageSquare size={16} color="var(--text-secondary)" />
+                                    📤 Smart Content Routing (Photos & Videos)
+                                </div>
+                            </div>
+                            <div className="admin-section-body" style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', lineHeight: 1.7 }}>
+                                <p><strong style={{ color: 'var(--text-primary)' }}>For media with smart routing</strong>, use the Telegram bot DM:</p>
+                                <ul style={{ marginTop: '0.6rem', paddingLeft: '1.2rem' }}>
+                                    <li><strong style={{ color: '#EC4899' }}>📸 Photo</strong> → Full to VIP + VIP+, blurred to Public</li>
+                                    <li><strong style={{ color: '#F59E0B' }}>🎬 Video</strong> → Full to VIP+ only, blurred thumbnail to VIP + Public</li>
+                                    <li><strong style={{ color: 'var(--gold)' }}>🖼 Album / Carousel (up to 10)</strong> → Send multiple as one group, bot asks routing</li>
+                                </ul>
+                                <p style={{ marginTop: '0.8rem' }}>Just DM the bot with your photo/video/album and it will ask you how to distribute it.</p>
                             </div>
                         </div>
                     </>

@@ -654,7 +654,7 @@ app.get('/api/admin/subscriptions/stats', verifyToken, async (req, res) => {
     res.json(stats);
 });
 
-// Post promo message to public channel
+// Post promo message to public channel (legacy endpoint)
 app.post('/api/admin/post-to-public', verifyToken, async (req, res) => {
     const { message } = req.body;
     if (!message || !message.trim()) return res.status(400).json({ error: 'Message is required' });
@@ -670,6 +670,36 @@ app.post('/api/admin/post-to-public', verifyToken, async (req, res) => {
             inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]]
         });
         res.json({ success: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// Generic post to any channel (vip / vipplus / public)
+app.post('/api/admin/post-to-channel', verifyToken, async (req, res) => {
+    const { message, channel } = req.body;
+    if (!message || !message.trim()) return res.status(400).json({ error: 'Message is required' });
+    if (!['vip', 'vipplus', 'public'].includes(channel)) return res.status(400).json({ error: 'channel must be vip, vipplus, or public' });
+
+    if (!process.env.TELEGRAM_BOT_TOKEN) return res.status(400).json({ error: 'Telegram bot not configured' });
+
+    let channelId = '';
+    let label = '';
+    if (channel === 'vip') { channelId = process.env.TELEGRAM_VIP_CHANNEL_ID || ''; label = 'VIP (₹299)'; }
+    else if (channel === 'vipplus') { channelId = process.env.TELEGRAM_VIP_PLUS_CHANNEL_ID || ''; label = 'VIP+ (₹399)'; }
+    else { channelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID || ''; label = 'Public'; }
+
+    if (!channelId) return res.status(400).json({ error: `${label} channel not configured in .env` });
+
+    try {
+        const payload = { chat_id: channelId, text: message, parse_mode: 'HTML' };
+        if (channel === 'public') {
+            const vipEntryUrl = getVipEntryUrl(process.env.FRONTEND_URL || 'https://yourwebsite.com');
+            payload.reply_markup = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]] };
+        }
+        const r = await telegram.callTelegramAPI('sendMessage', payload);
+        if (!r.ok) return res.status(500).json({ error: r.description || 'Telegram API error' });
+        res.json({ success: true, label });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -977,11 +1007,18 @@ app.get('/api/admin/posted-messages', verifyToken, (req, res) => res.json(posted
 // Channel member counts
 app.get('/api/admin/channel-stats', verifyToken, async (req, res) => {
     const { callTelegramAPI } = require('./telegram');
-    const stats = { vip: null, public: null };
+    // vip = VIP+ (₹399) for backward compatibility; vipOnly = VIP (₹299); public = free
+    const stats = { vip: null, vipOnly: null, public: null };
     try {
         if (process.env.TELEGRAM_VIP_PLUS_CHANNEL_ID) {
             const r = await callTelegramAPI('getChatMemberCount', { chat_id: process.env.TELEGRAM_VIP_PLUS_CHANNEL_ID });
             if (r.ok) stats.vip = r.result;
+        }
+    } catch (_) {}
+    try {
+        if (process.env.TELEGRAM_VIP_CHANNEL_ID) {
+            const r = await callTelegramAPI('getChatMemberCount', { chat_id: process.env.TELEGRAM_VIP_CHANNEL_ID });
+            if (r.ok) stats.vipOnly = r.result;
         }
     } catch (_) {}
     try {

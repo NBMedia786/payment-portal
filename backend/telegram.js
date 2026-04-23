@@ -307,6 +307,97 @@ async function smartDistributeVideo(videoFileId, thumbFileId, fullCaption, tease
     return results;
 }
 
+// Smart distribution for media albums (carousels) — up to 10 items
+// items = [{ type: 'photo'|'video', fileId, thumbFileId? }, ...]
+async function smartDistributeAlbum(items, fullCaption, teaserCaption, upgradeMarkup = null) {
+    const publicChannelId = process.env.TELEGRAM_PUBLIC_CHANNEL_ID;
+    const results = {};
+
+    // Build media group for VIP+ — all items full quality
+    const vipPlusMedia = items.map((it, idx) => {
+        const base = idx === 0 && fullCaption ? { caption: fullCaption, parse_mode: 'HTML' } : {};
+        if (it.type === 'video') return { type: 'video', media: it.fileId, ...base };
+        return { type: 'photo', media: it.fileId, ...base };
+    });
+
+    // Build media group for VIP — photos full, videos become blurred thumbnail photos
+    const vipMedia = items.map((it, idx) => {
+        const base = idx === 0 && fullCaption ? { caption: fullCaption, parse_mode: 'HTML' } : {};
+        if (it.type === 'video') {
+            if (!it.thumbFileId) return null;
+            return { type: 'photo', media: it.thumbFileId, has_spoiler: true, ...base };
+        }
+        return { type: 'photo', media: it.fileId, ...base };
+    }).filter(Boolean);
+
+    // Build media group for Public — all items blurred (spoiler)
+    const publicMedia = items.map((it, idx) => {
+        const base = idx === 0 && teaserCaption ? { caption: teaserCaption, parse_mode: 'HTML' } : {};
+        if (it.type === 'video') {
+            if (!it.thumbFileId) return null;
+            return { type: 'photo', media: it.thumbFileId, has_spoiler: true, ...base };
+        }
+        return { type: 'photo', media: it.fileId, has_spoiler: true, ...base };
+    }).filter(Boolean);
+
+    // Send to VIP+
+    if (CHANNEL_ID) {
+        try {
+            const r = await callTelegramAPI('sendMediaGroup', { chat_id: CHANNEL_ID, media: vipPlusMedia });
+            if (r && r.ok) results.vipPlus = r;
+            else results.vipPlusErr = (r && r.description) || 'unknown error';
+        } catch (e) { results.vipPlusErr = e.message; }
+    } else {
+        results.vipPlusErr = 'TELEGRAM_VIP_PLUS_CHANNEL_ID not set';
+    }
+
+    // Send to VIP (only if any media remains after video→thumbnail conversion)
+    if (VIP_ONLY_CHANNEL_ID) {
+        if (vipMedia.length === 0) {
+            results.vipErr = 'No items to send (videos had no thumbnails)';
+        } else {
+            try {
+                const r = await callTelegramAPI('sendMediaGroup', { chat_id: VIP_ONLY_CHANNEL_ID, media: vipMedia });
+                if (r && r.ok) results.vip = r;
+                else results.vipErr = (r && r.description) || 'unknown error';
+            } catch (e) { results.vipErr = e.message; }
+        }
+    } else {
+        results.vipErr = 'TELEGRAM_VIP_CHANNEL_ID not set';
+    }
+
+    // Send to Public
+    if (publicChannelId) {
+        if (publicMedia.length === 0) {
+            results.publicErr = 'No items to send (videos had no thumbnails)';
+        } else {
+            try {
+                const r = await callTelegramAPI('sendMediaGroup', { chat_id: publicChannelId, media: publicMedia });
+                if (r && r.ok) {
+                    results.public = r;
+                    // Media groups can't have inline buttons — send a separate message with the upgrade CTA
+                    if (upgradeMarkup) {
+                        try {
+                            await callTelegramAPI('sendMessage', {
+                                chat_id: publicChannelId,
+                                text: '🔓 <b>Tap below to unlock full content</b>',
+                                parse_mode: 'HTML',
+                                reply_markup: upgradeMarkup
+                            });
+                        } catch (_) {}
+                    }
+                } else {
+                    results.publicErr = (r && r.description) || 'unknown error';
+                }
+            } catch (e) { results.publicErr = e.message; }
+        }
+    } else {
+        results.publicErr = 'TELEGRAM_PUBLIC_CHANNEL_ID not set';
+    }
+
+    return results;
+}
+
 module.exports = {
     kickUser,
     kickUserFromChannel,
@@ -325,6 +416,7 @@ module.exports = {
     sendTeaserToVipOnlyChannel,
     smartDistributePhoto,
     smartDistributeVideo,
+    smartDistributeAlbum,
     deleteMessage,
     createPoll,
     pinMessage,
