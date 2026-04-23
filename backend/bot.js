@@ -1,5 +1,5 @@
 const supabase = require('./database');
-const { callTelegramAPI, kickUser, kickUserFromChannel, sendMessage, deleteMessage, smartDistributePhoto, smartDistributeVideo, createInviteLinkForChannel } = require('./telegram');
+const { callTelegramAPI, kickUser, kickUserFromChannel, sendMessage: _sendMessageRaw, deleteMessage, smartDistributePhoto, smartDistributeVideo, createInviteLinkForChannel } = require('./telegram');
 require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
@@ -10,6 +10,18 @@ const VIP_PLUS_CHANNEL_ID = CHANNEL_ID;
 const VIP_ONLY_CHANNEL_ID = process.env.TELEGRAM_VIP_CHANNEL_ID || ''; // VIP channel (₹299, photos only)
 const PUBLIC_CHANNEL_ID = process.env.TELEGRAM_PUBLIC_CHANNEL_ID || '';
 const ADMIN_IDS = (process.env.TELEGRAM_ADMIN_ID || '').split(',').map(s => s.trim()).filter(Boolean);
+
+// Wrapped sendMessage: if the recipient is an admin, also track the message
+// so it can be auto-deleted after 24h (keeps admin chat clean and formatted)
+async function sendMessage(chatId, text, replyMarkup = null) {
+    const res = await _sendMessageRaw(chatId, text, replyMarkup);
+    try {
+        if (ADMIN_IDS.includes(String(chatId)) && res && res.ok && res.result && res.result.message_id) {
+            trackAdminMsg(chatId, res.result.message_id);
+        }
+    } catch (_) {}
+    return res;
+}
 
 function matchesChannel(chatId, channelId) {
     if (!channelId) return false;
@@ -37,6 +49,8 @@ const WELCOME_STORE_PATH = path.join(__dirname, 'welcome_msgs.json');
 const PAYMENT_STORE_PATH = path.join(__dirname, 'payment_settings.json');
 const PENDING_PROOF_PATH = path.join(__dirname, 'pending_proof.json');
 const WELCOME_SETTINGS_PATH = path.join(__dirname, 'welcome_settings.json');
+const ADMIN_MSGS_PATH = path.join(__dirname, 'admin_msgs.json');
+const PAYMENT_VERIFY_PATH = path.join(__dirname, 'payment_verify_msgs.json');
 
 function loadWelcomeStore() {
     try {
@@ -105,6 +119,65 @@ function removePendingProof(userId) {
 function hasPendingProof(userId) {
     const d = loadPendingProof();
     return !!d[String(userId)];
+}
+
+// ——— Track bot messages in admin chats for auto-cleanup after 24h ———
+function loadAdminMsgs() {
+    try { if (fs.existsSync(ADMIN_MSGS_PATH)) return JSON.parse(fs.readFileSync(ADMIN_MSGS_PATH, 'utf8')); } catch (_) {}
+    return [];
+}
+function saveAdminMsgs(entries) {
+    try { fs.writeFileSync(ADMIN_MSGS_PATH, JSON.stringify(entries)); } catch (_) {}
+}
+function trackAdminMsg(chatId, messageId) {
+    if (!chatId || !messageId) return;
+    const entries = loadAdminMsgs();
+    entries.push({ chatId, messageId, sentAt: Date.now() });
+    saveAdminMsgs(entries);
+}
+async function sendAdminMessage(adminId, text, replyMarkup = null) {
+    const res = await sendMessage(adminId, text, replyMarkup);
+    if (res && res.ok && res.result) trackAdminMsg(adminId, res.result.message_id);
+    return res;
+}
+async function cleanupOldAdminMessages() {
+    const entries = loadAdminMsgs();
+    const cutoff = Date.now() - 24 * 60 * 60 * 1000;
+    const toDelete = entries.filter(e => e.sentAt && e.sentAt < cutoff);
+    if (toDelete.length === 0) return;
+    let deleted = 0;
+    for (const e of toDelete) {
+        try { await deleteMessage(e.chatId, e.messageId); deleted++; } catch (_) {}
+    }
+    const remaining = entries.filter(e => !(e.sentAt && e.sentAt < cutoff));
+    saveAdminMsgs(remaining);
+    if (deleted > 0) console.log(`[BOT] Cleaned up ${deleted} admin message(s) older than 24h`);
+}
+
+// ——— Track payment verification messages so we can delete on approve/reject ———
+function loadVerifyMsgs() {
+    try { if (fs.existsSync(PAYMENT_VERIFY_PATH)) return JSON.parse(fs.readFileSync(PAYMENT_VERIFY_PATH, 'utf8')); } catch (_) {}
+    return {};
+}
+function saveVerifyMsgs(data) {
+    try { fs.writeFileSync(PAYMENT_VERIFY_PATH, JSON.stringify(data)); } catch (_) {}
+}
+function addVerifyMsg(userId, chatId, messageId) {
+    const d = loadVerifyMsgs();
+    const key = String(userId);
+    if (!d[key]) d[key] = [];
+    d[key].push({ chatId, messageId });
+    saveVerifyMsgs(d);
+}
+async function clearVerifyMsgs(userId) {
+    const d = loadVerifyMsgs();
+    const key = String(userId);
+    const entries = d[key] || [];
+    for (const e of entries) {
+        try { await deleteMessage(e.chatId, e.messageId); } catch (_) {}
+    }
+    delete d[key];
+    saveVerifyMsgs(d);
 }
 
 function getPendingProofPlan(userId) {
@@ -551,7 +624,7 @@ async function handleSupportTicket(message) {
 
         for (const adminId of ADMIN_IDS) {
             try {
-                await sendMessage(adminId,
+                const textRes = await sendMessage(adminId,
                     `💳 <b>Payment Screenshot Received</b>\n\n` +
                     `👤 Name: ${fullName}\n` +
                     `🔖 Username: ${username}\n` +
@@ -563,11 +636,13 @@ async function handleSupportTicket(message) {
                         [{ text: '❌ Reject', callback_data: `reject_payment_${userId}` }]
                     ]}
                 );
-                await callTelegramAPI('copyMessage', {
+                if (textRes?.ok && textRes.result) addVerifyMsg(userId, adminId, textRes.result.message_id);
+                const copyRes = await callTelegramAPI('copyMessage', {
                     chat_id: adminId,
                     from_chat_id: message.chat.id,
                     message_id: message.message_id
                 });
+                if (copyRes?.ok && copyRes.result) addVerifyMsg(userId, adminId, copyRes.result.message_id);
             } catch (_) {}
         }
 
@@ -691,6 +766,7 @@ async function handleCommand(message) {
                 inline_keyboard: [
                     [{ text: '——— 📊 Overview ———', callback_data: 'noop' }],
                     [{ text: '📊 Full Stats', callback_data: 'admin_stats' }, { text: '📋 Subscribers', callback_data: 'admin_subscribers' }],
+                    [{ text: '👥 Users List (with Kick)', callback_data: 'admin_userslist_0' }],
                     [{ text: '🔴 Non-VIP', callback_data: 'admin_nonvip' }, { text: '🕐 Expired', callback_data: 'admin_expired' }],
                     [{ text: '——— 📢 Post Content ———', callback_data: 'noop' }],
                     [{ text: '📤 Smart Route Photo / Video', callback_data: 'admin_smart_post' }],
@@ -707,6 +783,48 @@ async function handleCommand(message) {
     if (text === '/setqr') {
         awaitingQrUploadAdmins.add(String(userId));
         await sendMessage(chatId, `📸 Send the payment QR image now.\n\nOptional: add caption text in the same photo message to set payment instructions.`);
+        return;
+    }
+
+    if (text === '/cleanchat' || text === '/clearchat') {
+        const parts = text.split(' ');
+        const requestedRange = parseInt(parts[1]);
+        const range = Math.min(Math.max(requestedRange || 500, 10), 2000);
+        const startId = message.message_id;
+
+        const notice = await sendMessage(chatId,
+            `🧹 <b>Cleaning chat...</b>\n\nAttempting to delete up to ${range} bot messages.\n<i>(Only bot messages within the last 48h will delete — Telegram limits.)</i>`
+        );
+        const noticeId = notice?.result?.message_id;
+
+        let deleted = 0, failed = 0;
+        for (let i = 1; i <= range; i++) {
+            const msgId = startId - i;
+            if (msgId <= 0) break;
+            try {
+                const r = await deleteMessage(chatId, msgId);
+                if (r?.ok) deleted++;
+                else failed++;
+            } catch (_) { failed++; }
+            if (i % 25 === 0) await new Promise(r => setTimeout(r, 300)); // rate limit safety
+        }
+
+        // Also clear the tracked store since we deleted everything
+        try {
+            const entries = loadAdminMsgs();
+            const remaining = entries.filter(e => String(e.chatId) !== String(chatId));
+            saveAdminMsgs(remaining);
+        } catch (_) {}
+
+        // Delete the command itself + the "cleaning..." notice
+        try { await deleteMessage(chatId, message.message_id); } catch (_) {}
+        if (noticeId) try { await deleteMessage(chatId, noticeId); } catch (_) {}
+
+        const result = await sendMessage(chatId,
+            `✅ <b>Chat cleaned!</b>\n\n` +
+            `🗑 Deleted: <b>${deleted}</b> messages\n` +
+            `<i>This message will auto-delete in 24h.</i>`
+        );
         return;
     }
 
@@ -753,8 +871,11 @@ async function handleCommand(message) {
             const urgency = daysLeft <= 3 ? ' ⚠️' : daysLeft <= 7 ? ' ⏳' : '';
             msg += `${planBadge} <b>${name}</b>${urgency}\n   ⏳ ${daysLeft}d left · ₹${s.amount}\n\n`;
         }
-        if (subs.length > 30) msg += `<i>... and ${subs.length - 30} more</i>`;
-        await sendMessage(chatId, msg);
+        if (subs.length > 30) msg += `<i>... and ${subs.length - 30} more</i>\n`;
+        msg += `\nTap below to open the interactive users list with <b>kick buttons</b> 👇`;
+        await sendMessage(chatId, msg, {
+            inline_keyboard: [[{ text: '👥 Open Users List (with Kick)', callback_data: 'admin_userslist_0' }]]
+        });
     }
 
     else if (text === '/expired') {
@@ -1037,6 +1158,67 @@ async function handleCommand(message) {
         }
     }
 
+    else if (text.startsWith('/info ') || text.startsWith('/user ') || text.startsWith('/history ')) {
+        const target = text.split(' ').slice(1).join(' ').trim().replace('@', '');
+        if (!target) {
+            await sendMessage(chatId, '❌ Usage: /info @username\nShows full history of a user.');
+            return;
+        }
+        // Find ALL subscription records for this user (not just active)
+        const { data: subs } = await supabase.from('prachi_subscriptions')
+            .select('*')
+            .or(`telegram_username.eq.@${target},telegram_username.eq.${target},phone.eq.${target},telegram_user_id.eq.${target}`)
+            .order('id', { ascending: true });
+
+        if (!subs || subs.length === 0) {
+            await sendMessage(chatId, `❌ No records found for "${target}"`);
+            return;
+        }
+
+        const first = subs[0];
+        const latest = subs[subs.length - 1];
+        const active = subs.find(s => s.status === 'active' && new Date(s.expires_at) > new Date());
+        const totalPaid = subs.reduce((sum, s) => sum + (s.amount || 0), 0);
+
+        const fmtDate = (d) => d ? new Date(d).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' }) : '—';
+        const fmtDateTime = (d) => d ? new Date(d).toLocaleString('en-IN', { day: '2-digit', month: 'short', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '—';
+
+        let msg = `🔍 <b>USER HISTORY</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `👤 <b>Identity</b>\n` +
+            `├ Username:  ${latest.telegram_username || '—'}\n` +
+            `├ User ID:   <code>${latest.telegram_user_id || '—'}</code>\n` +
+            `└ Phone:     ${latest.phone || '—'}\n\n` +
+            `📅 <b>Timeline</b>\n` +
+            `├ First seen:    ${fmtDateTime(first.created_at || first.started_at)}\n` +
+            `├ Latest action: ${fmtDateTime(latest.created_at || latest.started_at)}\n`;
+
+        if (active) {
+            const daysLeft = Math.max(0, Math.ceil((new Date(active.expires_at) - Date.now()) / 86400000));
+            const planLabel = active.plan === 'vip' ? '📸 VIP (₹299)' : '🔥 VIP+ (₹399)';
+            msg += `└ Current plan:  ${planLabel}\n\n` +
+                `✅ <b>Active Subscription</b>\n` +
+                `├ Started:    ${fmtDate(active.started_at || active.created_at)}\n` +
+                `├ Expires:    ${fmtDate(active.expires_at)}\n` +
+                `├ Days left:  <b>${daysLeft}</b>\n` +
+                `└ Amount:     ₹${active.amount}\n\n`;
+        } else {
+            msg += `└ Status:        🔴 No active subscription\n\n`;
+        }
+
+        msg += `💳 <b>All Subscriptions (${subs.length})</b>\n`;
+        for (const s of subs.slice(-10).reverse()) {
+            const planBadge = s.plan === 'vip' ? '📸' : '🔥';
+            const statusIcon = s.status === 'active' ? (new Date(s.expires_at) > new Date() ? '✅' : '🕐') : (s.status === 'cancelled' ? '❌' : '🕐');
+            msg += `${statusIcon} ${planBadge} ₹${s.amount} · ${s.status} · ${fmtDate(s.started_at || s.created_at)}\n`;
+        }
+        if (subs.length > 10) msg += `<i>...and ${subs.length - 10} older entries</i>\n`;
+
+        msg += `\n💰 <b>Total paid: ₹${totalPaid.toLocaleString()}</b>`;
+
+        await sendMessage(chatId, msg);
+    }
+
     else if (text.startsWith('/search ')) {
         const target = text.replace('/search ', '').trim().replace('@', '');
         const { data: subs } = await supabase.from('prachi_subscriptions')
@@ -1169,10 +1351,11 @@ async function handleCommand(message) {
             `🤖 <b>Admin Commands</b>\n\n` +
             `<b>📊 Stats & Users</b>\n` +
             `/stats — Full stats (VIP, VIP+, revenue)\n` +
-            `/subscribers — List active subscribers\n` +
+            `/subscribers — Active subs with ❌ kick buttons\n` +
             `/nonvip — List expired &amp; cancelled users\n` +
             `/expired — List expired/cancelled (short)\n` +
-            `/search &lt;username/phone&gt; — Look up user\n\n` +
+            `/search &lt;username/phone&gt; — Look up user (short)\n` +
+            `/info &lt;username/phone&gt; — Full user history\n\n` +
             `<b>📢 Messaging</b>\n` +
             `/post vip &lt;msg&gt; — Post to VIP Photos channel (₹299)\n` +
             `/post vipplus &lt;msg&gt; — Post to VIP+ channel (₹399)\n` +
@@ -1359,8 +1542,103 @@ async function handleCallbackQuery(callbackQuery) {
             const urgency = daysLeft <= 3 ? ' ⚠️' : daysLeft <= 7 ? ' ⏳' : '';
             msg += `${planBadge} <b>${name}</b>${urgency}\n   ⏳ ${daysLeft}d left · ₹${s.amount}\n\n`;
         }
-        if (subs.length > 30) msg += `<i>...and ${subs.length - 30} more</i>`;
-        await sendMessage(chatId, msg);
+        if (subs.length > 30) msg += `<i>...and ${subs.length - 30} more</i>\n`;
+        msg += `\nTap below to open the interactive users list with <b>kick buttons</b> 👇`;
+        await sendMessage(chatId, msg, {
+            inline_keyboard: [[{ text: '👥 Open Users List (with Kick)', callback_data: 'admin_userslist_0' }]]
+        });
+
+    } else if (data.startsWith('admin_userslist_') && isAdmin(userId)) {
+        const page = parseInt(data.replace('admin_userslist_', '')) || 0;
+        const PAGE_SIZE = 8;
+        const now2 = new Date().toISOString();
+        const { data: subs } = await supabase.from('prachi_subscriptions').select('*')
+            .eq('status', 'active').gt('expires_at', now2)
+            .order('expires_at', { ascending: true });
+        if (!subs || subs.length === 0) {
+            await sendMessage(chatId, '👥 No active users.');
+            return;
+        }
+        const totalPages = Math.ceil(subs.length / PAGE_SIZE);
+        const pageSubs = subs.slice(page * PAGE_SIZE, (page + 1) * PAGE_SIZE);
+
+        let msg = `👥 <b>USERS LIST</b> · Page ${page + 1}/${totalPages}\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n` +
+            `Total active: <b>${subs.length}</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n`;
+
+        const keyboard = [];
+        for (const s of pageSubs) {
+            const daysLeft = Math.max(0, Math.ceil((new Date(s.expires_at) - Date.now()) / 86400000));
+            const name = s.telegram_username || s.phone || (s.telegram_user_id ? `ID:${s.telegram_user_id}` : `#${s.id}`);
+            const badge = s.plan === 'vip' ? '📸' : '🔥';
+            keyboard.push([{ text: `${badge} ${name} · ${daysLeft}d · ❌ Kick`, callback_data: `kicksub_${s.id}` }]);
+        }
+        const navRow = [];
+        if (page > 0) navRow.push({ text: '◀️ Prev', callback_data: `admin_userslist_${page - 1}` });
+        if (page < totalPages - 1) navRow.push({ text: 'Next ▶️', callback_data: `admin_userslist_${page + 1}` });
+        if (navRow.length) keyboard.push(navRow);
+        keyboard.push([{ text: '🔙 Back to Admin Panel', callback_data: 'admin_back' }]);
+
+        await sendMessage(chatId, msg, { inline_keyboard: keyboard });
+
+    } else if (data.startsWith('kicksub_') && isAdmin(userId)) {
+        const subId = parseInt(data.replace('kicksub_', ''));
+        const { data: sub } = await supabase.from('prachi_subscriptions').select('*').eq('id', subId).maybeSingle();
+        if (!sub) { await sendMessage(chatId, '⚠️ Subscription not found.'); return; }
+        const name = sub.telegram_username || sub.phone || `ID:${sub.telegram_user_id}` || `#${sub.id}`;
+        await sendMessage(chatId,
+            `⚠️ <b>Confirm Kick & Cancel</b>\n\n` +
+            `👤 ${name}\n` +
+            `💎 Plan: ${sub.plan === 'vip' ? '📸 VIP (₹299)' : '🔥 VIP+ (₹399)'}\n` +
+            `📅 Expires: ${new Date(sub.expires_at).toLocaleDateString('en-IN')}\n\n` +
+            `This will <b>kick them from the channel</b> and <b>cancel their subscription</b>.`,
+            { inline_keyboard: [
+                [{ text: '✅ Yes, Kick & Cancel', callback_data: `kickconfirm_${subId}` }],
+                [{ text: '🚫 No, Keep Them', callback_data: 'admin_userslist_0' }]
+            ]}
+        );
+
+    } else if (data.startsWith('kickconfirm_') && isAdmin(userId)) {
+        const subId = parseInt(data.replace('kickconfirm_', ''));
+        const { data: sub } = await supabase.from('prachi_subscriptions').select('*').eq('id', subId).maybeSingle();
+        if (!sub) { await sendMessage(chatId, '⚠️ Subscription not found.'); return; }
+        const name = sub.telegram_username || sub.phone || `ID:${sub.telegram_user_id}`;
+        const nowIso = new Date().toISOString();
+        // Kick from correct channel based on plan
+        if (sub.telegram_user_id) {
+            try {
+                if (sub.plan === 'vip' && VIP_ONLY_CHANNEL_ID) {
+                    await kickUserFromChannel(VIP_ONLY_CHANNEL_ID, sub.telegram_user_id);
+                } else {
+                    await kickUser(sub.telegram_user_id);
+                }
+            } catch (e) {
+                await sendMessage(chatId, `⚠️ Kick API failed: ${e.message}\nMarking sub as cancelled anyway.`);
+            }
+        }
+        await supabase.from('prachi_subscriptions').update({ status: 'cancelled', cancelled_at: nowIso, kicked_at: nowIso }).eq('id', subId);
+        await sendMessage(chatId, `✅ <b>Kicked & Cancelled</b>\n\n👤 ${name}\n💎 Plan: ${sub.plan === 'vip' ? '📸 VIP' : '🔥 VIP+'}`);
+
+    } else if (data === 'admin_back' && isAdmin(userId)) {
+        await sendMessage(chatId,
+            `👑 <b>ADMIN PANEL</b> — Prachi's VIP Bot\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━`,
+            {
+                inline_keyboard: [
+                    [{ text: '——— 📊 Overview ———', callback_data: 'noop' }],
+                    [{ text: '📊 Full Stats', callback_data: 'admin_stats' }, { text: '📋 Subscribers', callback_data: 'admin_subscribers' }],
+                    [{ text: '👥 Users List (with Kick)', callback_data: 'admin_userslist_0' }],
+                    [{ text: '🔴 Non-VIP', callback_data: 'admin_nonvip' }, { text: '🕐 Expired', callback_data: 'admin_expired' }],
+                    [{ text: '——— 📢 Post Content ———', callback_data: 'noop' }],
+                    [{ text: '📤 Smart Route Photo / Video', callback_data: 'admin_smart_post' }],
+                    [{ text: '📸 Post → VIP ₹299', callback_data: 'admin_post_vip' }, { text: '🔥 Post → VIP+ ₹399', callback_data: 'admin_post_vipplus' }],
+                    [{ text: '📣 Post → Public Channel', callback_data: 'admin_post_public' }],
+                    [{ text: '——— ⚙️ Settings ———', callback_data: 'noop' }],
+                    [{ text: '🔔 Welcome Messages', callback_data: 'admin_welcome' }, { text: '❓ All Commands', callback_data: 'admin_help' }]
+                ]
+            }
+        );
 
     } else if (data === 'admin_nonvip' && isAdmin(userId)) {
         const now2 = new Date().toISOString();
@@ -1482,10 +1760,11 @@ async function handleCallbackQuery(callbackQuery) {
             `🤖 <b>All Admin Commands</b>\n\n` +
             `<b>📊 Stats & Users</b>\n` +
             `/stats — Full stats (VIP, VIP+, revenue)\n` +
-            `/subscribers — Active VIP list\n` +
+            `/subscribers — Active subs with ❌ kick buttons\n` +
             `/nonvip — Expired &amp; cancelled users\n` +
             `/expired — Short expired list\n` +
-            `/search &lt;user&gt; — Look up a user\n\n` +
+            `/search &lt;user&gt; — Look up a user (short)\n` +
+            `/info &lt;user&gt; — Full user history\n\n` +
             `<b>📢 Messaging</b>\n` +
             `/post vip &lt;msg&gt; — Post to VIP Photos channel (₹299)\n` +
             `/post vipplus &lt;msg&gt; — Post to VIP+ channel (₹399)\n` +
@@ -1498,6 +1777,7 @@ async function handleCallbackQuery(callbackQuery) {
             `<b>⚙️ Management</b>\n` +
             `/extend &lt;user&gt; &lt;days&gt; — Add days to sub\n` +
             `/kick &lt;user&gt; — Kick &amp; cancel user\n` +
+            `👥 Users List button → kick any user with one tap\n` +
             `/welcome — Toggle welcome messages on/off\n` +
             `/setqr — Upload/update payment QR\n` +
             `/showqr — Preview saved QR\n` +
@@ -1592,6 +1872,8 @@ async function handleCallbackQuery(callbackQuery) {
             return;
         }
 
+        // Delete the verification messages (screenshot + approve/reject buttons) to keep admin chat clean
+        await clearVerifyMsgs(targetUserId);
         await sendMessage(chatId, `✅ Approved!\n\n👤 User: ${targetUsername || targetUserId}\n💎 Plan: ${planLabel}\n🔗 One-time link sent (expires 24h, single-use).\n📅 Sub active for 30 days.`);
 
     } else if (data.startsWith('approve_payment_') && isAdmin(userId)) {
@@ -1611,6 +1893,7 @@ async function handleCallbackQuery(callbackQuery) {
         const linkRes = await callTelegramAPI('createChatInviteLink', { chat_id: VIP_PLUS_CHANNEL_ID, expire_date: expireDate, member_limit: 1 });
         if (!linkRes.ok) { await sendMessage(chatId, '❌ Failed to generate link.'); return; }
         try { await sendMessage(targetUserId, `🎉 <b>Payment Approved! Welcome to VIP+!</b>\n\nSub active 30 days.`, { inline_keyboard: [[{ text: '🔓 Join VIP+ Channel', url: linkRes.result.invite_link }]] }); } catch (_) {}
+        await clearVerifyMsgs(targetUserId);
         await sendMessage(chatId, `✅ Approved (VIP+)!\n👤 ${targetUsername || targetUserId}\n📅 30 days`);
 
     } else if (data.startsWith('reject_payment_') && isAdmin(userId)) {
@@ -1621,6 +1904,8 @@ async function handleCallbackQuery(callbackQuery) {
                 { inline_keyboard: [[{ text: '🙋 Contact Support', callback_data: 'contact_support' }]] }
             );
         } catch (_) {}
+        // Delete the verification messages (screenshot + approve/reject buttons)
+        await clearVerifyMsgs(targetUserId);
         await sendMessage(chatId, `❌ Rejected. User ${targetUserId} has been notified.`);
 
     } else if (data === 'contact_support') {
@@ -1691,7 +1976,8 @@ async function pollUpdates() {
             { command: 'subscribers', description: '📋 Active subscribers' },
             { command: 'nonvip', description: '🔴 Expired & cancelled users' },
             { command: 'expired', description: '🕐 Expired/cancelled (short list)' },
-            { command: 'search', description: '🔍 Look up a user' },
+            { command: 'search', description: '🔍 Look up a user (short)' },
+            { command: 'info', description: '📜 Full user history (joins, subs, payments)' },
             { command: 'approve', description: '✅ Approve user & send invite link' },
             { command: 'addvip', description: '➕ Grant VIP access to user' },
             { command: 'extend', description: '📅 Add days to a subscription' },
@@ -1701,6 +1987,7 @@ async function pollUpdates() {
             { command: 'welcome', description: '📢 Toggle welcome messages on/off' },
             { command: 'setqr', description: '🖼 Upload payment QR image' },
             { command: 'showqr', description: '🧾 Preview current QR' },
+            { command: 'cleanchat', description: '🧹 Bulk-clean old bot messages (48h limit)' },
             { command: 'help', description: '❓ All admin commands' },
         ];
         for (const adminId of ADMIN_IDS) {
@@ -1715,6 +2002,11 @@ async function pollUpdates() {
         cleanupOldWelcomeMessages();
         setInterval(cleanupOldWelcomeMessages, 60 * 60 * 1000);
         console.log('[BOT] Welcome message cleanup scheduled (every 1h)');
+
+        // Run admin chat cleanup every hour — deletes bot messages older than 24h
+        cleanupOldAdminMessages();
+        setInterval(cleanupOldAdminMessages, 60 * 60 * 1000);
+        console.log('[BOT] Admin chat cleanup scheduled (every 1h)');
     } catch (e) {
         console.error('[BOT] Failed to connect:', e.message);
         return;
@@ -1765,4 +2057,4 @@ function stopPolling() {
     polling = false;
 }
 
-module.exports = { pollUpdates, stopPolling };
+module.exports = { pollUpdates, stopPolling, trackAdminMsg };

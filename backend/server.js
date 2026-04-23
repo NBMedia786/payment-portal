@@ -778,33 +778,72 @@ cron.schedule('0 9 * * *', async () => {
     if (!process.env.TELEGRAM_BOT_TOKEN || !process.env.TELEGRAM_ADMIN_ID) return;
     try {
         const nowTime = new Date();
-        const nowIso = nowTime.toISOString();
-        const todayStart = new Date(nowTime.setHours(0, 0, 0, 0)).toISOString();
+        const todayStart = new Date(nowTime.getFullYear(), nowTime.getMonth(), nowTime.getDate(), 0, 0, 0).toISOString();
         const { data: allSubs } = await supabase.from('prachi_subscriptions').select('*');
         if (!allSubs) return;
-        let active = 0, expired = 0, cancelled = 0, revenue = 0, newToday = 0;
-        const expiringToday = [];
+
+        let activeVip = 0, activeVipPlus = 0, expired = 0, cancelled = 0, revenue = 0;
+        const newTodayList = [];
+        const expiringIn24h = [];
+
         allSubs.forEach(s => {
-            if (s.status === 'active' && new Date(s.expires_at) > new Date()) {
-                active++; revenue += s.amount || 0;
-                if (new Date(s.expires_at) < new Date(Date.now() + 24 * 60 * 60 * 1000)) {
-                    expiringToday.push(s.telegram_username || s.phone || `#${s.id}`);
+            const exp = new Date(s.expires_at);
+            if (s.status === 'active' && exp > nowTime) {
+                if (s.plan === 'vip') activeVip++; else activeVipPlus++;
+                revenue += s.amount || 0;
+                if (exp < new Date(Date.now() + 24 * 60 * 60 * 1000)) {
+                    const name = s.telegram_username || s.phone || `#${s.id}`;
+                    const badge = s.plan === 'vip' ? '📸' : '🔥';
+                    expiringIn24h.push(`${badge} ${name}`);
                 }
             }
             if (s.status === 'expired') expired++;
             if (s.status === 'cancelled') cancelled++;
-            if (s.started_at && s.started_at >= todayStart) newToday++;
+            if (s.started_at && s.started_at >= todayStart) {
+                const name = s.telegram_username || s.phone || `#${s.id}`;
+                const badge = s.plan === 'vip' ? '📸' : '🔥';
+                newTodayList.push(`${badge} ${name} · ₹${s.amount}`);
+            }
         });
-        const msg =
-            `📊 <b>Daily Report — ${new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}</b>\n\n` +
-            `✅ Active: <b>${active}</b>\n` +
-            `🆕 New today: <b>${newToday}</b>\n` +
-            `🕐 Expired: ${expired} | ❌ Cancelled: ${cancelled}\n` +
-            `💰 Active revenue: ₹${revenue}\n` +
-            (expiringToday.length > 0 ? `\n⚠️ <b>Expiring in 24h:</b>\n${expiringToday.slice(0, 10).map(n => `• ${n}`).join('\n')}` : `\n✅ No expiries in next 24h`);
+
+        const totalActive = activeVip + activeVipPlus;
+        const dateStr = new Date().toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' });
+
+        let msg =
+            `📊 <b>DAILY REPORT — ${dateStr}</b>\n` +
+            `━━━━━━━━━━━━━━━━━━━━━━\n\n` +
+            `💎 <b>Active Subscriptions</b>\n` +
+            `├ 📸 VIP (₹299):   <b>${activeVip}</b>\n` +
+            `├ 🔥 VIP+ (₹399):  <b>${activeVipPlus}</b>\n` +
+            `└ 💎 Total:        <b>${totalActive}</b>\n\n` +
+            `📈 <b>Today's Activity</b>\n` +
+            `├ 🆕 New subscribers: <b>${newTodayList.length}</b>\n` +
+            `├ 🕐 Expired total:   ${expired}\n` +
+            `└ ❌ Cancelled total: ${cancelled}\n\n` +
+            `💰 Active Revenue: <b>₹${revenue.toLocaleString()}</b>\n\n`;
+
+        if (newTodayList.length > 0) {
+            msg += `🆕 <b>New Today (${newTodayList.length})</b>\n` +
+                newTodayList.slice(0, 20).map(n => `• ${n}`).join('\n') + '\n\n';
+            if (newTodayList.length > 20) msg += `<i>...and ${newTodayList.length - 20} more</i>\n\n`;
+        }
+
+        if (expiringIn24h.length > 0) {
+            msg += `⚠️ <b>Expiring in 24h (${expiringIn24h.length})</b>\n` +
+                expiringIn24h.slice(0, 15).map(n => `• ${n}`).join('\n');
+            if (expiringIn24h.length > 15) msg += `\n<i>...and ${expiringIn24h.length - 15} more</i>`;
+        } else {
+            msg += `✅ No expiries in next 24h`;
+        }
+
         const adminIds = (process.env.TELEGRAM_ADMIN_ID || '').split(',').map(s => s.trim()).filter(Boolean);
+        let botTrack = null;
+        try { botTrack = require('./bot').trackAdminMsg; } catch (_) {}
         for (const adminId of adminIds) {
-            try { await telegram.sendMessage(adminId, msg); } catch (_) {}
+            try {
+                const r = await telegram.sendMessage(adminId, msg);
+                if (r?.ok && r.result && botTrack) botTrack(adminId, r.result.message_id);
+            } catch (_) {}
         }
         console.log('[CRON] Daily report sent');
     } catch (e) {
