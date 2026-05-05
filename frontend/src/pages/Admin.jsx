@@ -543,7 +543,14 @@ export default function Admin() {
     const handleUploadMedia = async (e) => {
         const file = e.target.files[0];
         if (!file) return;
+        const isVideo = file.type.startsWith('video');
+        const sizeMB = (file.size / (1024 * 1024)).toFixed(1);
+        const mediaIcon = isVideo ? '🎬' : '📸';
+        const mediaLabel = isVideo ? 'video' : 'photo';
+
         setLoading(true);
+        showNotify(`${mediaIcon} Uploading ${mediaLabel} (${sizeMB} MB)...`);
+
         const formData = new FormData();
         formData.append('media', file);
         try {
@@ -554,7 +561,8 @@ export default function Admin() {
             });
             const uploadData = await uploadRes.json();
             if (uploadData.url) {
-                const isVideo = file.type.startsWith('video');
+                showNotify(`✅ ${mediaIcon} ${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)} uploaded! Saving to gallery...`);
+
                 const addRes = await fetch(`${API_BASE}/api/admin/previews`, {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
@@ -571,16 +579,27 @@ export default function Admin() {
                     })
                 });
                 if (addRes.ok) {
-                    const destLabel = postDestination === 'vip' ? 'Posted to VIP + teaser to public!' : postDestination === 'public' ? 'Posted to public channel!' : 'Media added to gallery!';
+                    let destLabel;
+                    if (postDestination === 'vip') {
+                        destLabel = isVideo
+                            ? `🎉 Video posted! 🔥 VIP+ (full) · 📸 VIP (blur) · 📣 Public (blur)`
+                            : `🎉 Photo posted! 🔥 VIP+ (full) · 📸 VIP (full) · 📣 Public (blur)`;
+                    } else if (postDestination === 'public') {
+                        destLabel = `🎉 Posted to 📣 Public channel only!`;
+                    } else {
+                        destLabel = `✅ ${mediaIcon} ${mediaLabel.charAt(0).toUpperCase() + mediaLabel.slice(1)} added to gallery (not posted to channels)`;
+                    }
                     showNotify(destLabel);
                     setMediaCaptions(prev => ({ ...prev, [selectedCaptionKey]: '' }));
                     fetchPreviews();
+                } else {
+                    showNotify(`⚠️ Uploaded but save failed`, 'error');
                 }
             } else {
-                showNotify('Upload failed.', 'error');
+                showNotify('❌ Upload failed.', 'error');
             }
         } catch {
-            showNotify('Upload error.', 'error');
+            showNotify('❌ Upload error — check connection.', 'error');
         }
         setLoading(false);
         e.target.value = '';
