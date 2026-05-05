@@ -100,6 +100,43 @@ function createBlurredTeaserVideo(inputPath, outputPath) {
     });
 }
 
+// If the photo file is larger than 4.5MB (Telegram URL fetch limit ~5MB),
+// create a compressed copy. Returns the URL to use for Telegram (may be the same if already small enough).
+async function ensureTelegramSafePhotoUrl(originalUrl, originalRelPath, backendUrl) {
+    if (!originalRelPath) return originalUrl;
+    const filename = originalRelPath.replace(/^\/uploads\//, '');
+    const inputPath = path.join('uploads', filename);
+    if (!fs.existsSync(inputPath)) return originalUrl;
+    const stats = fs.statSync(inputPath);
+    const TELEGRAM_LIMIT = 4.5 * 1024 * 1024; // 4.5 MB safety margin
+    if (stats.size <= TELEGRAM_LIMIT) return originalUrl;
+
+    try {
+        const compressedFilename = `tg-${Date.now()}-${path.parse(filename).name}.jpg`;
+        const compressedPath = path.join('uploads', compressedFilename);
+        // Resize to max 2000px on longest side and compress to JPEG quality 85
+        await sharp(inputPath)
+            .resize({ width: 2000, height: 2000, fit: 'inside', withoutEnlargement: true })
+            .jpeg({ quality: 85, mozjpeg: true })
+            .toFile(compressedPath);
+        const newSize = fs.statSync(compressedPath).size;
+        // If still too large, drop quality
+        if (newSize > TELEGRAM_LIMIT) {
+            await sharp(inputPath)
+                .resize({ width: 1600, height: 1600, fit: 'inside', withoutEnlargement: true })
+                .jpeg({ quality: 75, mozjpeg: true })
+                .toFile(compressedPath);
+        }
+        console.log(`[TG-COMPRESS] ${(stats.size/1048576).toFixed(1)}MB → ${(fs.statSync(compressedPath).size/1048576).toFixed(1)}MB (${compressedFilename})`);
+        // Schedule cleanup of compressed copy after 1 hour (Telegram has fetched it by then)
+        setTimeout(() => fs.unlink(compressedPath, () => {}), 60 * 60 * 1000);
+        return `${backendUrl}/uploads/${compressedFilename}`;
+    } catch (e) {
+        console.error('[TG-COMPRESS] Failed:', e.message);
+        return originalUrl; // fall back to original even though it'll likely fail
+    }
+}
+
 app.post('/api/payment/create', async (req, res) => {
     const { phone, telegramUsername, buyerName, email } = req.body;
 
@@ -409,10 +446,17 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
             try {
                 if (dest === 'vip') {
                     console.log(`[POST-SMART] Starting smart-route: type=${type}, isImage=${isImage}, mediaUrl=${mediaUrl}`);
+
+                    // Auto-compress large photos so Telegram can fetch them (5MB URL limit)
+                    let telegramPhotoUrl = mediaUrl;
+                    if (isImage && url) {
+                        telegramPhotoUrl = await ensureTelegramSafePhotoUrl(mediaUrl, url, backendUrl);
+                    }
+
                     // --- Post actual content to VIP+ channel (always) ---
-                    if (isImage && mediaUrl) {
+                    if (isImage && telegramPhotoUrl) {
                         try {
-                            const r = await telegram.sendPhotoToVipChannel(mediaUrl, vipPostCaption);
+                            const r = await telegram.sendPhotoToVipChannel(telegramPhotoUrl, vipPostCaption);
                             if (r && !r.ok) console.error('[POST-VIPPLUS] Photo API error:', r.description);
                             else console.log('[POST-VIPPLUS] ✅ Photo posted to VIP+ channel');
                         } catch (e) {
@@ -434,11 +478,11 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
 
                     // --- Post to VIP channel (₹299): photos full, videos as blurred teaser ---
                     if (process.env.TELEGRAM_VIP_CHANNEL_ID) {
-                        if (isImage && mediaUrl) {
+                        if (isImage && telegramPhotoUrl) {
                             try {
                                 const r = await telegram.callTelegramAPI('sendPhoto', {
                                     chat_id: process.env.TELEGRAM_VIP_CHANNEL_ID,
-                                    photo: mediaUrl,
+                                    photo: telegramPhotoUrl,
                                     caption: vipPostCaption,
                                     parse_mode: 'HTML'
                                 });
@@ -539,8 +583,10 @@ app.post('/api/admin/previews', verifyToken, async (req, res) => {
                     const keyboard = { inline_keyboard: [[{ text: '🔓 Join VIP Now', url: vipEntryUrl }]] };
 
                     if (isImage && mediaUrl) {
+                        // Auto-compress large photos for Telegram URL fetch (5MB limit)
+                        const safeUrl = url ? await ensureTelegramSafePhotoUrl(mediaUrl, url, backendUrl) : mediaUrl;
                         try {
-                            await telegram.sendTeaserPhoto(mediaUrl, publicPostCaption, keyboard);
+                            await telegram.sendTeaserPhoto(safeUrl, publicPostCaption, keyboard);
                         } catch (e) {
                             console.error('[POST-PUBLIC] Photo failed, sending text:', e.message);
                             telegram.postToPublicChannel(publicPostCaption, keyboard).catch(() => {});
